@@ -203,7 +203,7 @@ TempoScheduler::~TempoScheduler() {
 	end(true);
 }
 
-SchedulerResult<void> TempoScheduler::begin(Tempo &date, const SchedulerConfig &config) {
+SchedulerResult<void> TempoScheduler::init(Tempo &date, const SchedulerConfig &config) {
 	if (impl_ && impl_->started) {
 		return SchedulerResult<void>::failure(SchedulerError::AlreadyInitialized);
 	}
@@ -211,11 +211,11 @@ SchedulerResult<void> TempoScheduler::begin(Tempo &date, const SchedulerConfig &
 	if (!impl_) {
 		return SchedulerResult<void>::failure(SchedulerError::NoMemory);
 	}
-	return begin() ? SchedulerResult<void>::success()
-	               : SchedulerResult<void>::failure(SchedulerError::InternalError);
+	return init() ? SchedulerResult<void>::success()
+	              : SchedulerResult<void>::failure(SchedulerError::InternalError);
 }
 
-bool TempoScheduler::begin() {
+bool TempoScheduler::init() {
 	if (!impl_) {
 		return false;
 	}

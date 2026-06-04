@@ -10,8 +10,8 @@ void setup() {
 	TempoConfig tempoConfig;
 	tempoConfig.timezone = "UTC0";
 	tempoConfig.minValidUnixSeconds = 0;
-	tempo.begin(tempoConfig);
-	scheduler.begin(tempo);
+	tempo.init(tempoConfig);
+	scheduler.init(tempo);
 
 	SchedulerJobOptions inlineOptions;
 	inlineOptions.name = "inline";

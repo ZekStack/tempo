@@ -12,8 +12,8 @@ void setup() {
 	tempoConfig.latitude = 47.4979f;
 	tempoConfig.longitude = 19.0402f;
 	tempoConfig.minValidUnixSeconds = 0;
-	tempo.begin(tempoConfig);
-	scheduler.begin(tempo);
+	tempo.init(tempoConfig);
+	scheduler.init(tempo);
 
 	scheduler.everySunRise("sunrise", []() {
 		Serial.println("sunrise job");

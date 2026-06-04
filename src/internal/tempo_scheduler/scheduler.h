@@ -67,8 +67,8 @@ class TempoScheduler {
 	explicit TempoScheduler(Tempo &date, const SchedulerConfig &config = SchedulerConfig{});
 	~TempoScheduler();
 
-	SchedulerResult<void> begin(Tempo &date, const SchedulerConfig &config = SchedulerConfig{});
-	bool begin();
+	SchedulerResult<void> init(Tempo &date, const SchedulerConfig &config = SchedulerConfig{});
+	bool init();
 	void end(bool waitForRunningJobs = true, uint32_t timeoutMs = 5000);
 	bool running() const;
 	bool draining() const;

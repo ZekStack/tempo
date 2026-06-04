@@ -62,13 +62,13 @@ void setup() {
 	config.latitude = 47.4979f;
 	config.longitude = 19.0402f;
 
-	TempoResult result = tempo.begin(config);
+	TempoResult result = tempo.init(config);
 	if (!result) {
 		Serial.println(result.message.c_str());
 		return;
 	}
 
-	scheduler.begin(tempo);
+	scheduler.init(tempo);
 	scheduler.everyMinutes(10, "sync", []() {
 		Serial.println("scheduled job");
 	});

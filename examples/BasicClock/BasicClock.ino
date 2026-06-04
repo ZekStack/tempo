@@ -12,7 +12,7 @@ void setup() {
 	config.longitude = 19.0402f;
 	config.minValidUnixSeconds = 0;
 
-	TempoResult result = tempo.begin(config);
+	TempoResult result = tempo.init(config);
 	if (!result) {
 		Serial.println(result.message.c_str());
 		return;

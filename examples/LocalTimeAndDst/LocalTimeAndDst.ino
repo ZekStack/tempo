@@ -8,7 +8,7 @@ void setup() {
 
 	TempoConfig config;
 	config.timezone = "CET-1CEST,M3.5.0/2,M10.5.0/3";
-	tempo.begin(config);
+	tempo.init(config);
 
 	DateTime utc = tempo.parseUtc("2026-03-29T00:30:00Z");
 	LocalDateTime local = tempo.toLocal(utc);

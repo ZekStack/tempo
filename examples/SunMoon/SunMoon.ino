@@ -11,7 +11,7 @@ void setup() {
 	config.latitude = 47.4979f;
 	config.longitude = 19.0402f;
 	config.minValidUnixSeconds = 0;
-	tempo.begin(config);
+	tempo.init(config);
 
 	TempoSunCycle cycle = tempo.sunCycleToday();
 	if (cycle.valid) {

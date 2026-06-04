@@ -10,9 +10,9 @@ void setup() {
 	TempoConfig tempoConfig;
 	tempoConfig.timezone = "UTC0";
 	tempoConfig.minValidUnixSeconds = 0;
-	tempo.begin(tempoConfig);
+	tempo.init(tempoConfig);
 
-	scheduler.begin(tempo);
+	scheduler.init(tempo);
 	scheduler.everyMinutes(10, "ten-minute", []() {
 		Serial.println("every ten minutes");
 	});

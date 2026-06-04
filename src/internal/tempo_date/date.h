@@ -169,8 +169,7 @@ class Tempo {
 
 	Tempo();
 	~Tempo();
-	TempoResult begin(const TempoConfig &config = TempoConfig());
-	void init(const TempoConfig &config);
+	TempoResult init(const TempoConfig &config = TempoConfig());
 	void deinit();
 	bool isInitialized() const {
 		return initialized_;
@@ -444,6 +443,7 @@ class Tempo {
 #endif
 	void dispatchNtpSync(const DateTime &syncedAtUtc);
 	void setNtpSyncCallbackCallable(const NtpSyncCallable &callback);
+	void applyConfig(const TempoConfig &config);
 	bool applyNtpConfig() const;
 	bool hasAnyNtpServerConfigured() const;
 

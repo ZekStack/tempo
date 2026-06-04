@@ -19,7 +19,7 @@ config.latitude = 47.4979f;
 config.longitude = 19.0402f;
 config.ntpServers = {"pool.ntp.org", "time.google.com"};
 
-TempoResult result = tempo.begin(config);
+TempoResult result = tempo.init(config);
 if (!result) {
 	Serial.println(result.message.c_str());
 	return;
@@ -29,7 +29,7 @@ if (!result) {
 Start the scheduler after Tempo is initialized.
 
 ```cpp
-scheduler.begin(tempo);
+scheduler.init(tempo);
 scheduler.everyMinutes(5, "heartbeat", []() {
 	Serial.println("tick");
 });

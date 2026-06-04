@@ -7,7 +7,7 @@ This page summarizes the public API declared by `src/Tempo.h`.
 Tempo does not throw exceptions. Core operations return `TempoResult`; scheduler operations return `SchedulerResult<T>`.
 
 ```cpp
-TempoResult result = tempo.begin(config);
+TempoResult result = tempo.init(config);
 if (!result) {
 	Serial.println(result.message.c_str());
 }
@@ -17,7 +17,7 @@ if (!result) {
 
 | Method | Purpose |
 | --- | --- |
-| `begin(config)` | Initialize timezone, location, and NTP settings. |
+| `init(config)` | Initialize timezone, location, and NTP settings. |
 | `nowUtc()` | Return current system time as UTC `DateTime`. |
 | `nowLocal()` | Return current local calendar time. |
 | `toLocal(DateTime)` | Convert UTC to local using Tempo timezone. |

@@ -297,7 +297,7 @@ void setup() {
     tempoConfig.taskCoreId = tskNO_AFFINITY;
     tempoConfig.taskName = "tempo-task";
 
-    TempoResult tempoResult = tempo.begin(tempoConfig);
+    TempoResult tempoResult = tempo.init(tempoConfig);
     if (!tempoResult) {
         Serial.println(tempoResult.message);
         return;
@@ -310,9 +310,9 @@ void setup() {
     schedulerConfig.taskName = "tempo-scheduler";
     schedulerConfig.workerCount = 2;
 
-    TempoResult schedulerResult = scheduler.begin(tempo, schedulerConfig);
+    SchedulerResult<void> schedulerResult = scheduler.init(tempo, schedulerConfig);
     if (!schedulerResult) {
-        Serial.println(schedulerResult.message);
+        Serial.println(static_cast<int>(schedulerResult.error));
         return;
     }
 

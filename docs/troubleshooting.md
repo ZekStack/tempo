@@ -14,4 +14,4 @@ config.timezone = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 
 ## Sunrise or sunset is invalid
 
-Set both `config.latitude` and `config.longitude`, and call `tempo.begin(config)` before sun-cycle calls.
+Set both `config.latitude` and `config.longitude`, and call `tempo.init(config)` before sun-cycle calls.

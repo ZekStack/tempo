@@ -204,11 +204,11 @@ Tempo::~Tempo() {
 	deinit();
 }
 
-TempoResult Tempo::begin(const TempoConfig &config) {
+TempoResult Tempo::init(const TempoConfig &config) {
 	if (initialized_) {
 		return TempoResult::failure(TempoStatus::AlreadyInitialized, "tempo already initialized");
 	}
-	init(config);
+	applyConfig(config);
 	return TempoResult::success("tempo initialized");
 }
 
@@ -244,7 +244,7 @@ void Tempo::deinit() {
 	}
 }
 
-void Tempo::init(const TempoConfig &config) {
+void Tempo::applyConfig(const TempoConfig &config) {
 	latitude_ = config.latitude;
 	longitude_ = config.longitude;
 	hasLocation_ = true;
