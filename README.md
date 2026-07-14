@@ -5,6 +5,7 @@ Tempo is a time, calendar, sun, moon, and scheduling toolkit for ESP32.
 Tempo helps you keep UTC-first time logic explicit in Arduino ESP32 projects while still providing timezone-aware local conversion, DST-aware calendar helpers, cached sun cycle data, moon phase data, and scheduled job execution.
 
 [![CI](https://github.com/ZekStack/tempo/actions/workflows/ci.yml/badge.svg)](https://github.com/ZekStack/tempo/actions/workflows/ci.yml)
+[![Host Tests](https://github.com/ZekStack/tempo/actions/workflows/host-tests.yml/badge.svg)](https://github.com/ZekStack/tempo/actions/workflows/host-tests.yml)
 [![Release](https://img.shields.io/github/v/release/ZekStack/tempo?sort=semver)](https://github.com/ZekStack/tempo/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 
@@ -14,7 +15,7 @@ Tempo helps you keep UTC-first time logic explicit in Arduino ESP32 projects whi
 * **DST-aware** - POSIX timezone strings are used for local time and recurring schedules.
 * **ESP32-friendly** - FreeRTOS service tasks, queue-based scheduling, and result-based errors.
 * **Sun and moon data** - sunrise, sunset, solar noon, daylight checks, moon angle, and illumination.
-* **Production-minded** - no exceptions, bindable callbacks, and C++20 with embedded constraints.
+* **Production-minded** - no explicit exception-based control flow, bindable callbacks, and C++20 with embedded constraints.
 
 ## Install
 
@@ -84,9 +85,11 @@ void loop() {
 > [!IMPORTANT]
 > Recurring scheduler jobs wait for valid wall-clock time. Set `minValidUnixSeconds` for your product so jobs do not run against an unset clock.
 
-* Tempo uses POSIX timezone strings for DST-aware local conversion.
-* Sunrise and sunset calls use cached daily data through `sunCycleToday()`.
+* Tempo uses POSIX timezone strings for DST-aware local conversion. Local timezone operations are serialized because the C runtime timezone is process-global.
+* Latitude and longitude are optional, but both must be configured together before using stored-location sun APIs.
+* `sunCycleToday()` lazily calculates and caches the current local date. Date-taking daylight and sunrise/sunset match APIs calculate against the supplied date.
 * One-shot UTC schedules remain exact; recurring schedules evaluate in local time.
+* Scheduler control calls made from an inline scheduler callback return `SchedulerError::Busy` rather than waiting on the scheduler service task itself.
 
 ## Examples
 
@@ -145,8 +148,8 @@ scheduler.schedule(TempoSchedule::dailyAt(8, 30), options, []() {});
 | Filesystem | none |
 | PSRAM | Used for selected internal buffers when available |
 | Dependencies | none |
-| Exceptions | Not used |
-| Status | Early-stage `0.0.1` |
+| Exceptions | Not used for public error handling |
+| Status | `0.1.0` release candidate |
 
 ## License
 
