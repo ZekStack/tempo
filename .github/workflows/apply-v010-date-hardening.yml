@@ -22,9 +22,37 @@ jobs:
           ref: agent/tempo-v0.1.0-hardening
           fetch-depth: 0
 
-      - name: Apply and commit date hardening
+      - name: Correct parser replacement and apply patch
         shell: bash
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/apply_v010_date_hardening.py")
+          text = path.read_text(encoding="utf-8")
+          block = '''replace_once(
+              "src/internal/tempo_date/date.cpp",
+              "!Utils::parseIntSlice(str + 17, 2, 0, 60, second)",
+              "!Utils::parseIntSlice(str + 17, 2, 0, 59, second)",
+          )
+          replace_once(
+              "src/internal/tempo_date/date.cpp",
+              "!Utils::parseIntSlice(str + 17, 2, 0, 60, second)",
+              "!Utils::parseIntSlice(str + 17, 2, 0, 59, second)",
+          )
+          '''
+          replacement = '''target = Path("src/internal/tempo_date/date.cpp")
+          text = target.read_text(encoding="utf-8")
+          old_seconds = "!Utils::parseIntSlice(str + 17, 2, 0, 60, second)"
+          if text.count(old_seconds) != 2:
+              raise RuntimeError(f"date.cpp: expected two second parser matches, found {text.count(old_seconds)}")
+          target.write_text(text.replace(old_seconds, "!Utils::parseIntSlice(str + 17, 2, 0, 59, second)"), encoding="utf-8")
+          '''
+          if text.count(block) != 1:
+              raise RuntimeError("could not locate duplicated parser replacement block")
+          path.write_text(text.replace(block, replacement, 1), encoding="utf-8")
+          PY
+
+          rm -f DATE_HARDENING_ERROR.txt
           set +e
           python3 scripts/apply_v010_date_hardening.py > /tmp/date-hardening.log 2>&1
           status=$?
@@ -35,7 +63,7 @@ jobs:
 
           if [ "$status" -ne 0 ]; then
             cp /tmp/date-hardening.log DATE_HARDENING_ERROR.txt
-            git add DATE_HARDENING_ERROR.txt
+            git add -A
             git commit -m "Record date hardening patch failure"
             git push origin HEAD:agent/tempo-v0.1.0-hardening
             exit 0
