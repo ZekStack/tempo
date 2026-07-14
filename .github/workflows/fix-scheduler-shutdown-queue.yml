@@ -8,6 +8,10 @@ on:
       - scripts/fix_scheduler_shutdown_queue.py
       - .github/workflows/fix-scheduler-shutdown-queue.yml
 
+concurrency:
+  group: tempo-v010-shutdown-patch
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
