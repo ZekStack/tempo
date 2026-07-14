@@ -64,13 +64,7 @@ replace_once(
     '''\t\tcontext->createdWithCaps = createdWithCaps;
 \t\tif (!workers_.pushBack({handle, createdWithCaps})) {
 ''',
-    '''\t\tif (createdWithCaps != context->createdWithCaps) {
-\t\t\tscheduler_task_support::deleteTask(handle, createdWithCaps);
-\t\t\tdelete context;
-\t\t\tend(false);
-\t\t\treturn false;
-\t\t}
-\t\tif (!workers_.pushBack({handle, createdWithCaps})) {
+    '''\t\tif (!workers_.pushBack({handle, createdWithCaps})) {
 ''',
 )
 replace_once(
@@ -96,13 +90,11 @@ replace_once(
 \t    task.usePsramStack,
 \t    context->createdWithCaps
 \t);
-\tif (created != pdPASS || handle == nullptr) {
 ''',
     '''\t    task.coreId,
 \t    task.usePsramStack,
 \t    createdWithCaps
 \t);
-\tif (created != pdPASS || handle == nullptr || createdWithCaps != context->createdWithCaps) {
 ''',
 )
 
