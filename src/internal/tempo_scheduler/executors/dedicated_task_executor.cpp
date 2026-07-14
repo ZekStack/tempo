@@ -89,10 +89,12 @@ bool DedicatedTaskExecutor::submit(const JobInvocation &invocation) {
 	context->invocation = invocation;
 	context->invocation.runtime = runtime_;
 	context->state = state;
+	const DedicatedTaskOptions &task = invocation.dedicatedTask;
+	context->createdWithCaps = task.usePsramStack;
 	state->activeTasks.fetch_add(1);
 
 	TaskHandle_t handle = nullptr;
-	const DedicatedTaskOptions &task = invocation.dedicatedTask;
+	bool createdWithCaps = false;
 	const BaseType_t created = scheduler_task_support::createTaskPinned(
 	    &DedicatedTaskExecutor::taskEntry,
 	    task.name ? task.name : "sched-task",
@@ -102,7 +104,7 @@ bool DedicatedTaskExecutor::submit(const JobInvocation &invocation) {
 	    &handle,
 	    task.coreId,
 	    task.usePsramStack,
-	    context->createdWithCaps
+	    createdWithCaps
 	);
 	if (created != pdPASS || handle == nullptr) {
 		state->activeTasks.fetch_sub(1);

@@ -325,6 +325,10 @@ void TempoScheduler::end(bool waitForRunningJobs, uint32_t timeoutMs) {
 			}
 		}
 		impl_->stopExecutors(waitForRunningJobs);
+		if (impl_->runtime) {
+			impl_->runtime->eventQueue.store(nullptr);
+			impl_->runtime->accepting.store(false);
+		}
 		impl_->service->stop();
 		impl_->service.reset();
 	} else {
@@ -336,10 +340,8 @@ void TempoScheduler::end(bool waitForRunningJobs, uint32_t timeoutMs) {
 			vTaskDelay(pdMS_TO_TICKS(10));
 		}
 		if (impl_->runtime) {
-			if (!waitForRunningJobs) {
-				impl_->runtime->eventQueue.store(nullptr);
-				impl_->runtime->accepting.store(false);
-			}
+			impl_->runtime->eventQueue.store(nullptr);
+			impl_->runtime->accepting.store(false);
 		}
 		impl_->stopExecutors(waitForRunningJobs);
 		if (impl_->eventQueue) {

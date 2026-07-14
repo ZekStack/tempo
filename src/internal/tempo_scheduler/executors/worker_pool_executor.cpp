@@ -70,6 +70,7 @@ bool WorkerPoolExecutor::begin(const std::shared_ptr<SchedulerExecutorRuntime> &
 			return false;
 		}
 		context->owner = this;
+		context->createdWithCaps = config_.usePsramStack;
 
 		TaskHandle_t handle = nullptr;
 		bool createdWithCaps = false;
@@ -89,7 +90,6 @@ bool WorkerPoolExecutor::begin(const std::shared_ptr<SchedulerExecutorRuntime> &
 			end(false);
 			return false;
 		}
-		context->createdWithCaps = createdWithCaps;
 		if (!workers_.pushBack({handle, createdWithCaps})) {
 			scheduler_task_support::deleteTask(handle, createdWithCaps);
 			end(false);
