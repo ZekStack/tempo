@@ -156,6 +156,19 @@ replace_once(
 \t\timpl_->stopExecutors(waitForRunningJobs);
 ''',
 )
+replace_once(
+    "src/internal/tempo_date/date.h",
+    "\tmutable std::recursive_mutex sunCycleMutex_{};\n",
+    "\tstatic std::recursive_mutex sunCycleMutex_;\n",
+)
+replace_once(
+    "src/internal/tempo_date/date.cpp",
+    '''std::recursive_mutex Tempo::ntpMutex_{};
+''',
+    '''std::recursive_mutex Tempo::ntpMutex_{};
+std::recursive_mutex Tempo::sunCycleMutex_{};
+''',
+)
 
 Path("scripts/finalize_completion_queue_shutdown.py").unlink(missing_ok=True)
 Path(".github/workflows/finalize-completion-queue-shutdown.yml").unlink(missing_ok=True)
