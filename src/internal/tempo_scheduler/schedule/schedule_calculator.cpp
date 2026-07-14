@@ -162,16 +162,13 @@ bool computeNextSunOccurrence(
 	DateTime cursor = date.startOfDayLocal(rounded);
 	for (int64_t dayOffset = 0; dayOffset < kMaxSunSearchDays; ++dayOffset) {
 		const TempoSunEventResult cycle = sunrise ? date.sunrise(cursor) : date.sunset(cursor);
-		if (!cycle.ok) {
-			continue;
+		if (cycle.ok) {
+			const DateTime candidate = date.addMinutes(cycle.value, spec.sunOffsetMinutes);
+			if (!date.isBefore(candidate, rounded)) {
+				outNextUtc = candidate;
+				return true;
+			}
 		}
-
-		const DateTime candidate = date.addMinutes(cycle.value, spec.sunOffsetMinutes);
-		if (date.isBefore(candidate, rounded)) {
-			continue;
-		}
-		outNextUtc = candidate;
-		return true;
 		cursor = date.nextDailyAtLocal(0, 0, 0, date.addSeconds(cursor, 1));
 	}
 	return false;
@@ -204,9 +201,9 @@ bool computeNextMoonPhaseOccurrence(
 		    segmentIntersectsPeriodicWindow(previousUnwrapped, currentUnwrapped,
 		                                    spec.moonPhaseAngleDegrees,
 		                                    spec.moonPhaseToleranceDegrees)) {
-			DateTime fine = date.addMinutes(current, -kCoarseStepMinutes + 1);
+			DateTime fine = date.addMinutes(current, -kCoarseStepMinutes);
 			double finePrevious = previousUnwrapped;
-			for (int minute = 1; minute <= kCoarseStepMinutes; ++minute) {
+			for (int minute = 0; minute <= kCoarseStepMinutes; ++minute) {
 				TempoMoonPhase finePhase = date.moonPhase(fine);
 				if (!finePhase.ok) {
 					return false;
@@ -259,9 +256,9 @@ bool computeNextMoonIlluminationOccurrence(
 		                       previousIllumination <= maxWindow + kComparisonEpsilon;
 		if (!wasInside && segmentIntersectsRange(previousIllumination, currentIllumination,
 		                                         minWindow, maxWindow)) {
-			DateTime fine = date.addMinutes(current, -kCoarseStepMinutes + 1);
+			DateTime fine = date.addMinutes(current, -kCoarseStepMinutes);
 			double finePrevious = previousIllumination;
-			for (int minute = 1; minute <= kCoarseStepMinutes; ++minute) {
+			for (int minute = 0; minute <= kCoarseStepMinutes; ++minute) {
 				TempoMoonPhase finePhase = date.moonPhase(fine);
 				if (!finePhase.ok) {
 					return false;
