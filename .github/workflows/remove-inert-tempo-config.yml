@@ -8,6 +8,10 @@ on:
       - scripts/remove_inert_tempo_config.py
       - .github/workflows/remove-inert-tempo-config.yml
 
+concurrency:
+  group: tempo-v010-config-cleanup
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
