@@ -218,9 +218,6 @@ TempoResult Tempo::init(const TempoConfig &config) {
 	                     config.longitude < -180.0f || config.longitude > 180.0f))) {
 		return TempoResult::failure(TempoStatus::InvalidArgument, "invalid location configuration");
 	}
-	if (config.sunCycleCalculationHour > 23 || config.sunCycleCalculationMinute > 59) {
-		return TempoResult::failure(TempoStatus::InvalidArgument, "invalid sun calculation time");
-	}
 	applyConfig(config);
 	return TempoResult::success("tempo initialized");
 }
@@ -264,8 +261,6 @@ void Tempo::applyConfig(const TempoConfig &config) {
 	hasLocation_ = std::isfinite(latitude_) && std::isfinite(longitude_);
 	usePSRAMBuffers_ = config.usePSRAMBuffers;
 	minValidUnixSeconds_ = config.minValidUnixSeconds;
-	sunCycleCalculationHour_ = config.sunCycleCalculationHour;
-	sunCycleCalculationMinute_ = config.sunCycleCalculationMinute;
 	sunCycleMatchWindowSeconds_ = config.sunCycleMatchWindowSeconds;
 	sunCycleCache_ = TempoSunCycle{};
 	timeZone_ = DateString(DateAllocator<char>(usePSRAMBuffers_));
@@ -426,11 +421,6 @@ uint64_t Tempo::unixSeconds(const DateTime &dt) const {
 	return static_cast<uint64_t>(dt.epochSeconds);
 }
 
-void Tempo::setSunCycleCalculationTime(uint8_t hour, uint8_t minute) {
-	sunCycleCalculationHour_ = hour;
-	sunCycleCalculationMinute_ = minute;
-}
-
 void Tempo::dispatchNtpSync(const DateTime &syncedAtUtc) {
 	std::lock_guard<std::recursive_mutex> lock(ntpMutex_);
 	lastNtpSync_ = syncedAtUtc;
@@ -559,6 +549,9 @@ DateTime Tempo::fromUtc(int year, int month, int day, int hour, int minute, int 
 }
 
 DateTime Tempo::fromLocal(int year, int month, int day, int hour, int minute, int second) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	if (!Utils::validHms(hour, minute, second) || month < 1 || month > 12 || year < 0 ||
 	    year > 9999) {
 		return DateTime{};
@@ -900,6 +893,9 @@ int Tempo::getWeekdayUtc(const DateTime &dt) const {
 }
 
 DateTime Tempo::startOfDayLocal(const DateTime &dt) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	tm t{};
 	if (!Utils::toLocalTm(dt, t)) {
 		return dt;
@@ -912,6 +908,9 @@ DateTime Tempo::startOfDayLocal(const DateTime &dt) const {
 }
 
 DateTime Tempo::addCalendarDaysLocal(const DateTime &dt, int days) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	tm t{};
 	if (!Utils::toLocalTm(dt, t)) {
 		return dt;
@@ -927,6 +926,9 @@ DateTime Tempo::endOfDayLocal(const DateTime &dt) const {
 }
 
 DateTime Tempo::startOfMonthLocal(const DateTime &dt) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	tm t{};
 	if (!Utils::toLocalTm(dt, t)) {
 		return dt;
@@ -940,6 +942,9 @@ DateTime Tempo::startOfMonthLocal(const DateTime &dt) const {
 }
 
 DateTime Tempo::endOfMonthLocal(const DateTime &dt) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	DateTime start = startOfMonthLocal(dt);
 	tm t{};
 	if (!Utils::toLocalTm(start, t)) {
@@ -965,6 +970,9 @@ DateTime Tempo::startOfYearUtc(const DateTime &dt) const {
 }
 
 DateTime Tempo::startOfYearLocal(const DateTime &dt) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	tm t{};
 	if (!Utils::toLocalTm(dt, t)) {
 		return dt;
@@ -979,6 +987,9 @@ DateTime Tempo::startOfYearLocal(const DateTime &dt) const {
 }
 
 DateTime Tempo::setTimeOfDayLocal(const DateTime &dt, int hour, int minute, int second) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	if (!Utils::validHms(hour, minute, second)) {
 		return dt;
 	}
@@ -1036,6 +1047,9 @@ DateTime Tempo::nextWeekdayAtLocal(
 }
 
 int Tempo::getYearLocal(const DateTime &dt) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	tm t{};
 	if (!Utils::toLocalTm(dt, t)) {
 		return 0;
@@ -1044,6 +1058,9 @@ int Tempo::getYearLocal(const DateTime &dt) const {
 }
 
 int Tempo::getMonthLocal(const DateTime &dt) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	tm t{};
 	if (!Utils::toLocalTm(dt, t)) {
 		return 0;
@@ -1052,6 +1069,9 @@ int Tempo::getMonthLocal(const DateTime &dt) const {
 }
 
 int Tempo::getDayLocal(const DateTime &dt) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	tm t{};
 	if (!Utils::toLocalTm(dt, t)) {
 		return 0;
@@ -1060,6 +1080,9 @@ int Tempo::getDayLocal(const DateTime &dt) const {
 }
 
 int Tempo::getWeekdayLocal(const DateTime &dt) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	tm t{};
 	if (!Utils::toLocalTm(dt, t)) {
 		return 0;
@@ -1117,6 +1140,9 @@ bool Tempo::formatWithPatternUtc(
 bool Tempo::formatWithPatternLocal(
     const DateTime &dt, const char *pattern, char *outBuffer, size_t outSize
 ) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	if (!pattern || !outBuffer || outSize == 0) {
 		return false;
 	}
@@ -1137,7 +1163,7 @@ bool Tempo::dateTimeToStringUtc(
 bool Tempo::dateTimeToStringLocal(
     const DateTime &dt, char *outBuffer, size_t outSize, TempoFormat style
 ) const {
-	return dt.localString(outBuffer, outSize, style);
+	return formatLocal(dt, style, outBuffer, outSize);
 }
 
 bool Tempo::localDateTimeToString(
@@ -1155,17 +1181,17 @@ bool Tempo::nowLocalString(char *outBuffer, size_t outSize, TempoFormat style) c
 }
 
 bool Tempo::lastNtpSyncStringUtc(char *outBuffer, size_t outSize, TempoFormat style) const {
-	if (!hasLastNtpSync_) {
+	if (!hasLastNtpSync()) {
 		return false;
 	}
-	return dateTimeToStringUtc(lastNtpSync_, outBuffer, outSize, style);
+	return dateTimeToStringUtc(lastNtpSync(), outBuffer, outSize, style);
 }
 
 bool Tempo::lastNtpSyncStringLocal(char *outBuffer, size_t outSize, TempoFormat style) const {
-	if (!hasLastNtpSync_) {
+	if (!hasLastNtpSync()) {
 		return false;
 	}
-	return dateTimeToStringLocal(lastNtpSync_, outBuffer, outSize, style);
+	return dateTimeToStringLocal(lastNtpSync(), outBuffer, outSize, style);
 }
 
 std::string Tempo::dateTimeToStringUtc(const DateTime &dt, TempoFormat style) const {
@@ -1201,17 +1227,17 @@ std::string Tempo::nowLocalString(TempoFormat style) const {
 }
 
 std::string Tempo::lastNtpSyncStringUtc(TempoFormat style) const {
-	if (!hasLastNtpSync_) {
+	if (!hasLastNtpSync()) {
 		return std::string();
 	}
-	return dateTimeToStringUtc(lastNtpSync_, style);
+	return dateTimeToStringUtc(lastNtpSync(), style);
 }
 
 std::string Tempo::lastNtpSyncStringLocal(TempoFormat style) const {
-	if (!hasLastNtpSync_) {
+	if (!hasLastNtpSync()) {
 		return std::string();
 	}
-	return dateTimeToStringLocal(lastNtpSync_, style);
+	return dateTimeToStringLocal(lastNtpSync(), style);
 }
 
 Tempo::ParseResult Tempo::parseIso8601Utc(const char *str) const {
@@ -1255,6 +1281,9 @@ Tempo::ParseResult Tempo::parseIso8601Utc(const char *str) const {
 }
 
 Tempo::ParseResult Tempo::parseDateTimeLocal(const char *str) const {
+	Utils::ScopedTz scopedTimeZone(
+	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
+	);
 	ParseResult result{false, DateTime{}};
 	if (!str) {
 		return result;

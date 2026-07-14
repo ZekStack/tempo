@@ -528,6 +528,7 @@ bool Tempo::isDay(
 }
 
 bool Tempo::refreshSunCycleCache(const DateTime &day) {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
 	TempoSunEventResult rise = sunriseFromConfig(day);
 	TempoSunEventResult set = sunsetFromConfig(day);
 	if (!rise.ok || !set.ok) {
@@ -550,6 +551,7 @@ bool Tempo::refreshSunCycleCache(const DateTime &day) {
 }
 
 TempoSunCycle Tempo::sunCycleFor(const DateTime &day) {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
 	if (!sunCycleCache_.valid || !isSameLocalDay(sunCycleCache_.calculatedForDateUtc, day)) {
 		refreshSunCycleCache(day);
 	}

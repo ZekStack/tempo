@@ -131,13 +131,7 @@ struct TempoConfig {
 	bool usePSRAMBuffers = false;   // prefer PSRAM for Tempo-owned config/state text buffers
 	const char *ntpServer2 = nullptr; // optional secondary NTP server
 	const char *ntpServer3 = nullptr; // optional tertiary NTP server
-	uint8_t sunCycleCalculationHour = 4;
-	uint8_t sunCycleCalculationMinute = 0;
 	uint32_t sunCycleMatchWindowSeconds = 60;
-	uint32_t taskStackSize = 6848;
-	UBaseType_t taskPriority = 1;
-	BaseType_t taskCoreId = tskNO_AFFINITY;
-	const char *taskName = "tempo-task";
 	int64_t minValidUnixSeconds = 1577836800;
 };
 
@@ -209,7 +203,6 @@ class Tempo {
 	bool isValidTime() const;
 	uint64_t unixSeconds() const;
 	uint64_t unixSeconds(const DateTime &dt) const;
-	void setSunCycleCalculationTime(uint8_t hour, uint8_t minute);
 
 	DateTime now() const;
 	DateTime nowUtc() const; // alias of now(), returns the raw system clock (UTC)
@@ -483,9 +476,8 @@ class Tempo {
 	bool hasLocation_ = false;
 	bool initialized_ = false;
 	int64_t minValidUnixSeconds_ = 1577836800;
-	uint8_t sunCycleCalculationHour_ = 4;
-	uint8_t sunCycleCalculationMinute_ = 0;
 	uint32_t sunCycleMatchWindowSeconds_ = 60;
+	mutable std::recursive_mutex sunCycleMutex_{};
 	TempoSunCycle sunCycleCache_{};
 
   public:
