@@ -1,0 +1,30 @@
+name: Remove inert Tempo configuration
+
+on:
+  push:
+    branches:
+      - agent/tempo-v0.1.0-hardening
+    paths:
+      - scripts/remove_inert_tempo_config.py
+      - .github/workflows/remove-inert-tempo-config.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/tempo-v0.1.0-hardening
+          fetch-depth: 0
+      - run: python3 scripts/remove_inert_tempo_config.py
+      - run: |
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Remove inert Tempo task configuration"
+          git push origin HEAD:agent/tempo-v0.1.0-hardening
