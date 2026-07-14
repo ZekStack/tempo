@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 
 #include "internal/tempo_date/date.h"
@@ -7,6 +8,7 @@
 
 namespace {
 constexpr const char *kBudapestTz = "CET-1CEST,M3.5.0/2,M10.5.0/3";
+constexpr const char *kTokyoTz = "JST-9";
 
 int failures = 0;
 
@@ -83,6 +85,41 @@ void testCalendarSchedulingAcrossDst() {
 	       "next daily local occurrence must preserve wall-clock time across DST");
 }
 
+void testIndependentInstanceTimezones() {
+	Tempo budapest = makeBudapestTempo();
+	Tempo tokyo;
+	TempoConfig tokyoConfig;
+	tokyoConfig.timeZone = kTokyoTz;
+	expect(static_cast<bool>(tokyo.init(tokyoConfig)), "Tokyo Tempo initialization should succeed");
+
+	const DateTime instant = budapest.fromUtc(2026, 1, 15, 12, 0, 0);
+	const LocalDateTime budapestLocal = budapest.toLocal(instant);
+	const LocalDateTime tokyoLocal = tokyo.toLocal(instant);
+	expect(budapestLocal.ok && budapestLocal.hour == 13,
+	       "Budapest conversion must use the Budapest instance timezone");
+	expect(tokyoLocal.ok && tokyoLocal.hour == 21,
+	       "Tokyo conversion must use the Tokyo instance timezone");
+
+	const LocalDateTime budapestStart = budapest.toLocal(budapest.startOfDayLocal(instant));
+	const LocalDateTime tokyoStart = tokyo.toLocal(tokyo.startOfDayLocal(instant));
+	expect(budapestStart.ok && budapestStart.hour == 0 && budapestStart.day == 15,
+	       "Budapest calendar helpers must remain instance-scoped");
+	expect(tokyoStart.ok && tokyoStart.hour == 0 && tokyoStart.day == 15,
+	       "Tokyo calendar helpers must remain instance-scoped");
+
+	char budapestText[32]{};
+	char tokyoText[32]{};
+	expect(budapest.dateTimeToStringLocal(
+	           instant, budapestText, sizeof(budapestText), TempoFormat::DateTime),
+	       "Budapest local formatting should succeed");
+	expect(tokyo.dateTimeToStringLocal(instant, tokyoText, sizeof(tokyoText), TempoFormat::DateTime),
+	       "Tokyo local formatting should succeed");
+	expect(std::strcmp(budapestText, "2026-01-15 13:00:00") == 0,
+	       "Budapest local formatting must use the Budapest instance timezone");
+	expect(std::strcmp(tokyoText, "2026-01-15 21:00:00") == 0,
+	       "Tokyo local formatting must use the Tokyo instance timezone");
+}
+
 void testLocationAndSunDateHandling() {
 	Tempo withoutLocation = makeBudapestTempo();
 	expect(!withoutLocation.sunrise().ok,
@@ -132,6 +169,7 @@ int main() {
 	testDstDayBoundaries();
 	testAmbiguousRoundTrip();
 	testCalendarSchedulingAcrossDst();
+	testIndependentInstanceTimezones();
 	testLocationAndSunDateHandling();
 	testScheduleValidation();
 
