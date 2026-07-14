@@ -1,8 +1,0 @@
-Traceback (most recent call last):
-  File "/home/runner/work/tempo/tempo/scripts/apply_v010_date_hardening.py", line 309, in <module>
-    replace_once(
-  File "/home/runner/work/tempo/tempo/scripts/apply_v010_date_hardening.py", line 16, in replace_once
-    raise RuntimeError(f"{path}: expected one match, found {count}\n--- old ---\n{old}")
-RuntimeError: src/internal/tempo_date/date.cpp: expected one match, found 2
---- old ---
-!Utils::parseIntSlice(str + 17, 2, 0, 60, second)

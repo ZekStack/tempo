@@ -4,6 +4,8 @@
 #include <Arduino.h>
 #include <functional>
 #include <initializer_list>
+#include <limits>
+#include <mutex>
 #include <stdint.h>
 #include <string>
 #include <time.h>
@@ -111,14 +113,15 @@ struct LocalDateTime {
 	int second = 0;
 	int offsetMinutes = 0; // local - UTC
 	DateTime utc{};
+	bool hasResolvedUtc = false;
 
 	bool localString(char *outBuffer, size_t outSize) const;
 	std::string localString() const;
 };
 
 struct TempoConfig {
-	float latitude = 0.0f;
-	float longitude = 0.0f;
+	float latitude = std::numeric_limits<float>::quiet_NaN();
+	float longitude = std::numeric_limits<float>::quiet_NaN();
 	const char *timezone = nullptr;
 	const char *timeZone = nullptr; // POSIX TZ string, e.g. "CET-1CEST,M3.5.0/2,M10.5.0/3"
 	std::vector<const char *> ntpServers{};
@@ -450,7 +453,9 @@ class Tempo {
 	TempoSunEventResult sunriseFromConfig(const DateTime &day) const;
 	TempoSunEventResult sunsetFromConfig(const DateTime &day) const;
 	bool isDayWithOffsets(const DateTime &day, int sunRiseOffsetSec, int sunSetOffsetSec) const;
+	TempoSunCycle sunCycleFor(const DateTime &day);
 	bool refreshSunCycleCache(const DateTime &day);
+	DateTime addCalendarDaysLocal(const DateTime &dt, int days) const;
 	bool inSunWindow(const DateTime &dt, const DateTime &event, const TempoDuration &offset) const;
 
 	float latitude_ = 0.0f;
@@ -474,6 +479,7 @@ class Tempo {
 	static NtpSyncCallback activeNtpSyncCallback_;
 	static NtpSyncCallable activeNtpSyncCallbackCallable_;
 	static Tempo *activeNtpSyncOwner_;
+	static std::recursive_mutex ntpMutex_;
 	bool hasLocation_ = false;
 	bool initialized_ = false;
 	int64_t minValidUnixSeconds_ = 1577836800;

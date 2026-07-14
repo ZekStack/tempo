@@ -517,12 +517,13 @@ bool Tempo::isDay(
 bool Tempo::isDay(
     const DateTime &day, const TempoDuration &sunRiseOffset, const TempoDuration &sunSetOffset
 ) const {
-	TempoSunCycle cycle = sunCycleCache_;
-	if (!cycle.valid) {
+	const TempoSunEventResult rise = sunriseFromConfig(day);
+	const TempoSunEventResult set = sunsetFromConfig(day);
+	if (!rise.ok || !set.ok) {
 		return false;
 	}
-	DateTime start = addSeconds(cycle.sunRiseUtc, sunRiseOffset.seconds());
-	DateTime end = addSeconds(cycle.sunSetUtc, sunSetOffset.seconds());
+	DateTime start = addSeconds(rise.value, sunRiseOffset.seconds());
+	DateTime end = addSeconds(set.value, sunSetOffset.seconds());
 	return !isBefore(day, start) && !isAfter(day, end);
 }
 
@@ -535,7 +536,7 @@ bool Tempo::refreshSunCycleCache(const DateTime &day) {
 	}
 
 	TempoSunCycle cycle;
-	cycle.calculatedForDateUtc = startOfDayUtc(day);
+	cycle.calculatedForDateUtc = day;
 	cycle.calculatedForLocalDate = toLocal(day);
 	cycle.sunRiseUtc = rise.value;
 	cycle.sunSetUtc = set.value;
@@ -548,11 +549,15 @@ bool Tempo::refreshSunCycleCache(const DateTime &day) {
 	return true;
 }
 
-TempoSunCycle Tempo::sunCycleToday() {
-	if (!sunCycleCache_.valid || !isSameLocalDay(sunCycleCache_.calculatedForDateUtc, now())) {
-		refreshSunCycleCache(now());
+TempoSunCycle Tempo::sunCycleFor(const DateTime &day) {
+	if (!sunCycleCache_.valid || !isSameLocalDay(sunCycleCache_.calculatedForDateUtc, day)) {
+		refreshSunCycleCache(day);
 	}
 	return sunCycleCache_;
+}
+
+TempoSunCycle Tempo::sunCycleToday() {
+	return sunCycleFor(now());
 }
 
 DateTime Tempo::sunRiseTodayUtc() {
@@ -595,7 +600,7 @@ bool Tempo::isSunRise(const TempoDuration &offset) {
 }
 
 bool Tempo::isSunRise(const DateTime &dt, const TempoDuration &offset) {
-	TempoSunCycle cycle = sunCycleToday();
+	TempoSunCycle cycle = sunCycleFor(dt);
 	return cycle.valid && inSunWindow(dt, cycle.sunRiseUtc, offset);
 }
 
@@ -612,7 +617,7 @@ bool Tempo::isSunSet(const TempoDuration &offset) {
 }
 
 bool Tempo::isSunSet(const DateTime &dt, const TempoDuration &offset) {
-	TempoSunCycle cycle = sunCycleToday();
+	TempoSunCycle cycle = sunCycleFor(dt);
 	return cycle.valid && inSunWindow(dt, cycle.sunSetUtc, offset);
 }
 
