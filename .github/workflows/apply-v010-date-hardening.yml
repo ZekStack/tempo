@@ -22,16 +22,26 @@ jobs:
           ref: agent/tempo-v0.1.0-hardening
           fetch-depth: 0
 
-      - name: Apply date hardening
-        run: python3 scripts/apply_v010_date_hardening.py
-
-      - name: Validate patch
-        run: git diff --check
-
-      - name: Commit date hardening
+      - name: Apply and commit date hardening
+        shell: bash
         run: |
+          set +e
+          python3 scripts/apply_v010_date_hardening.py > /tmp/date-hardening.log 2>&1
+          status=$?
+          set -e
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ "$status" -ne 0 ]; then
+            cp /tmp/date-hardening.log DATE_HARDENING_ERROR.txt
+            git add DATE_HARDENING_ERROR.txt
+            git commit -m "Record date hardening patch failure"
+            git push origin HEAD:agent/tempo-v0.1.0-hardening
+            exit 0
+          fi
+
+          git diff --check
           git add -A
           git commit -m "Fix DST parsing and sun-cycle date handling"
           git push origin HEAD:agent/tempo-v0.1.0-hardening
