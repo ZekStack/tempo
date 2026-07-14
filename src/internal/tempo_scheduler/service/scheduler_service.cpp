@@ -60,6 +60,8 @@ bool SchedulerService::begin() {
 		return true;
 	}
 
+	stopRequested_.store(false);
+	taskExited_.store(false);
 	commandQueue_ = xQueueCreate(config_.commandQueueDepth, sizeof(SchedulerServiceCommand *));
 	eventQueue_ = xQueueCreate(config_.eventQueueDepth, sizeof(SchedulerEvent));
 	if (!commandQueue_ || !eventQueue_) {
@@ -133,14 +135,8 @@ void SchedulerService::stop() {
 			if (!pending) {
 				continue;
 			}
-			// Producer owns the command until send() succeeds, then may free it only after wait()
-			// completes. The service may free only abandoned commands, and must decide before
-			// signal().
-			const bool shouldDelete = pending->abandoned();
-			pending->signal();
-			if (shouldDelete) {
-				delete pending;
-			}
+			pending->cancelAndSignal();
+			pending->release();
 		}
 	}
 	if (commandQueue_) {
@@ -162,6 +158,10 @@ bool SchedulerService::send(SchedulerServiceCommand *command) {
 		return false;
 	}
 	return xQueueSend(commandQueue_, &command, 0) == pdTRUE;
+}
+
+bool SchedulerService::isCurrentTask() const {
+	return task_ != nullptr && xTaskGetCurrentTaskHandle() == task_;
 }
 
 void SchedulerService::taskEntry(void *arg) {
@@ -188,14 +188,11 @@ void SchedulerService::drainCommands() {
 		if (!command) {
 			continue;
 		}
-		command->execute(core_, date_, executors_);
-		// Producer owns the command until send() succeeds, then may free it only after wait()
-		// completes. The service may free only abandoned commands, and must decide before signal().
-		const bool shouldDelete = command->abandoned();
-		command->signal();
-		if (shouldDelete) {
-			delete command;
+		if (command->tryBeginExecution()) {
+			command->execute(core_, date_, executors_);
+			command->complete();
 		}
+		command->release();
 	}
 }
 

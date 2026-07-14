@@ -151,6 +151,9 @@ void SchedulerCore::retireJob(size_t slotIndex) {
 	record.runningCount = 0;
 	record.callback = makeEmptyCallback();
 	record.name.clear();
+	record.dedicatedTaskName.clear();
+	record.dedicatedTask = DedicatedTaskOptions{};
+	record.hasDedicatedTaskOptions = false;
 	record.id = 0;
 	record.generation++;
 	freeSlots_.pushBack(slotIndex);
@@ -194,6 +197,12 @@ SchedulerResult<uint32_t> SchedulerCore::addJob(
 	}
 	if (options.dedicatedTask) {
 		record.dedicatedTask = *options.dedicatedTask;
+		if (!record.dedicatedTaskName.assign(options.dedicatedTask->name)) {
+			return SchedulerResult<uint32_t>::failure(SchedulerError::NoMemory);
+		}
+		record.dedicatedTask.name = record.dedicatedTaskName.empty()
+		                                ? nullptr
+		                                : record.dedicatedTaskName.c_str();
 	}
 	const bool shouldPrimeImmediately = !record.paused && clockValid(nowUtc);
 	if (shouldPrimeImmediately) {
@@ -356,7 +365,16 @@ SchedulerResult<void> SchedulerCore::getJobInfo(uint32_t jobId, JobInfo &out) co
 	const JobRecord &record = jobs_[slotResult.value];
 	out = JobInfo{};
 	out.id = record.id;
-	out.name = record.name.empty() ? nullptr : record.name.c_str();
+	const char *sourceName = record.name.empty() ? nullptr : record.name.c_str();
+	if (sourceName) {
+		size_t nameIndex = 0;
+		while (sourceName[nameIndex] != '\0' && nameIndex + 1 < kSchedulerJobNameCapacity) {
+			out.name[nameIndex] = sourceName[nameIndex];
+			++nameIndex;
+		}
+		out.name[nameIndex] = '\0';
+		out.nameTruncated = sourceName[nameIndex] != '\0';
+	}
 	out.paused = record.paused;
 	out.running = record.runningCount > 0;
 	out.queuedWhileRunning = record.queuedWhileRunning;
