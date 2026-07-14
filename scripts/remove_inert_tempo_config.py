@@ -44,8 +44,11 @@ replace_once(
     '''\tuint8_t sunCycleCalculationHour_ = 4;
 \tuint8_t sunCycleCalculationMinute_ = 0;
 \tuint32_t sunCycleMatchWindowSeconds_ = 60;
+\tTempoSunCycle sunCycleCache_{};
 ''',
     '''\tuint32_t sunCycleMatchWindowSeconds_ = 60;
+\tmutable std::recursive_mutex sunCycleMutex_{};
+\tTempoSunCycle sunCycleCache_{};
 ''',
 )
 replace_once(
@@ -174,6 +177,16 @@ std::string Tempo::lastNtpSyncStringLocal(TempoFormat style) const {
 \treturn dateTimeToStringLocal(lastNtpSync(), style);
 }
 ''',
+)
+replace_once(
+    "src/internal/tempo_date/sun.cpp",
+    "bool Tempo::refreshSunCycleCache(const DateTime &day) {",
+    "bool Tempo::refreshSunCycleCache(const DateTime &day) {\n\tstd::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);",
+)
+replace_once(
+    "src/internal/tempo_date/sun.cpp",
+    "TempoSunCycle Tempo::sunCycleFor(const DateTime &day) {",
+    "TempoSunCycle Tempo::sunCycleFor(const DateTime &day) {\n\tstd::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);",
 )
 
 Path("scripts/remove_inert_tempo_config.py").unlink(missing_ok=True)
