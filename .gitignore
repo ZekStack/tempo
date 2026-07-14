@@ -1,6 +1,7 @@
 .pio/
 .vscode/
 .venv
+.host-test-build/
 build/
 build_prev_runner/
 release-changelog.md
