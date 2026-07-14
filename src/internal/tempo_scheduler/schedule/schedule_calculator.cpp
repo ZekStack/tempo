@@ -53,7 +53,7 @@ bool fieldWithinRange(const ScheduleField &field, int min, int max) {
 	}
 	const uint64_t mask = field.rawMask();
 	const uint64_t allowed = allowedMask(min, max);
-	return mask != 0 && (mask & allowed) != 0;
+	return mask != 0 && (mask & ~allowed) == 0;
 }
 
 double normalizeAngle360(double angle) {
@@ -112,44 +112,41 @@ bool segmentIntersectsPeriodicWindow(double a, double b, double center, double t
 bool computeNextCronOccurrence(
     Tempo &date, const TempoSchedule &spec, const DateTime &fromUtc, DateTime &outNextUtc
 ) {
-	DateTime cursor = roundToNextMinute(date, fromUtc);
-	for (int64_t minuteIndex = 0; minuteIndex < kMaxSearchMinutes; ++minuteIndex) {
-		const int month = date.getMonthLocal(cursor);
-		const int day = date.getDayLocal(cursor);
-		const int dayOfWeek = date.getWeekdayLocal(cursor);
-
-		const DateTime startOfDay = date.startOfDayLocal(cursor);
-		const int64_t minutesIntoDay = date.differenceInMinutes(cursor, startOfDay);
-		if (minutesIntoDay < 0) {
-			cursor = date.addMinutes(cursor, 1);
-			continue;
-		}
-
-		const int hour = static_cast<int>(minutesIntoDay / 60);
-		const int minute = static_cast<int>(minutesIntoDay % 60);
-
+	const DateTime rounded = roundToNextMinute(date, fromUtc);
+	DateTime dayCursor = date.startOfDayLocal(rounded);
+	for (int dayIndex = 0; dayIndex <= 366; ++dayIndex) {
+		const int month = date.getMonthLocal(dayCursor);
+		const int day = date.getDayLocal(dayCursor);
+		const int dayOfWeek = date.getWeekdayLocal(dayCursor);
 		const bool domAny = spec.dayOfMonth.isAny();
 		const bool dowAny = spec.dayOfWeek.isAny();
 		const bool domOk = spec.dayOfMonth.matches(day);
 		const bool dowOk = spec.dayOfWeek.matches(dayOfWeek);
+		const bool dayOk = (domAny && dowAny) || (domAny && dowOk) || (dowAny && domOk) ||
+		                   (!domAny && !dowAny && (domOk || dowOk));
 
-		bool dayOk = false;
-		if (domAny && dowAny) {
-			dayOk = true;
-		} else if (domAny) {
-			dayOk = dowOk;
-		} else if (dowAny) {
-			dayOk = domOk;
-		} else {
-			dayOk = domOk || dowOk;
+		if (spec.month.matches(month) && dayOk) {
+			for (int hour = 0; hour < 24; ++hour) {
+				if (!spec.hour.matches(hour)) {
+					continue;
+				}
+				for (int minute = 0; minute < 60; ++minute) {
+					if (!spec.minute.matches(minute)) {
+						continue;
+					}
+					const DateTime candidate = date.setTimeOfDayLocal(dayCursor, hour, minute, 0);
+					const LocalDateTime resolved = date.toLocal(candidate);
+					if (!resolved.ok || resolved.year != date.getYearLocal(dayCursor) ||
+					    resolved.month != month || resolved.day != day || resolved.hour != hour ||
+					    resolved.minute != minute || date.isBefore(candidate, rounded)) {
+						continue;
+					}
+					outNextUtc = candidate;
+					return true;
+				}
+			}
 		}
-
-		if (spec.month.matches(month) && spec.hour.matches(hour) && spec.minute.matches(minute) &&
-		    dayOk) {
-			outNextUtc = date.setTimeOfDayLocal(cursor, hour, minute, 0);
-			return true;
-		}
-		cursor = date.addMinutes(cursor, 1);
+		dayCursor = date.nextDailyAtLocal(0, 0, 0, date.addSeconds(dayCursor, 1));
 	}
 	return false;
 }
@@ -162,9 +159,8 @@ bool computeNextSunOccurrence(
     bool sunrise
 ) {
 	const DateTime rounded = roundToNextMinute(date, fromUtc);
-	const DateTime startOfDay = date.startOfDayLocal(rounded);
+	DateTime cursor = date.startOfDayLocal(rounded);
 	for (int64_t dayOffset = 0; dayOffset < kMaxSunSearchDays; ++dayOffset) {
-		const DateTime cursor = date.addDays(startOfDay, static_cast<int32_t>(dayOffset));
 		const TempoSunEventResult cycle = sunrise ? date.sunrise(cursor) : date.sunset(cursor);
 		if (!cycle.ok) {
 			continue;
@@ -176,6 +172,7 @@ bool computeNextSunOccurrence(
 		}
 		outNextUtc = candidate;
 		return true;
+		cursor = date.nextDailyAtLocal(0, 0, 0, date.addSeconds(cursor, 1));
 	}
 	return false;
 }
@@ -193,32 +190,42 @@ bool computeNextMoonPhaseOccurrence(
 	}
 	double previousUnwrapped = static_cast<double>(previousPhase.angleDegrees);
 
-	for (int64_t minuteIndex = 0; minuteIndex < kMaxMoonSearchMinutes; ++minuteIndex) {
+	constexpr int kCoarseStepMinutes = 60;
+	for (int64_t elapsed = 0; elapsed < kMaxMoonSearchMinutes; elapsed += kCoarseStepMinutes) {
+		current = date.addMinutes(rounded, elapsed + kCoarseStepMinutes);
 		TempoMoonPhase currentPhase = date.moonPhase(current);
 		if (!currentPhase.ok) {
 			return false;
 		}
-
 		const double currentUnwrapped =
 		    unwrapAngle(previousUnwrapped, static_cast<double>(currentPhase.angleDegrees));
-		const bool crossed = !valueWithinPeriodicWindow(
-		                         previousUnwrapped,
-		                         static_cast<double>(spec.moonPhaseAngleDegrees),
-		                         static_cast<double>(spec.moonPhaseToleranceDegrees)
-		                     ) &&
-		                     segmentIntersectsPeriodicWindow(
-		                         previousUnwrapped,
-		                         currentUnwrapped,
-		                         static_cast<double>(spec.moonPhaseAngleDegrees),
-		                         static_cast<double>(spec.moonPhaseToleranceDegrees)
-		                     );
-		if (crossed) {
-			outNextUtc = current;
-			return true;
+		if (!valueWithinPeriodicWindow(previousUnwrapped, spec.moonPhaseAngleDegrees,
+		                               spec.moonPhaseToleranceDegrees) &&
+		    segmentIntersectsPeriodicWindow(previousUnwrapped, currentUnwrapped,
+		                                    spec.moonPhaseAngleDegrees,
+		                                    spec.moonPhaseToleranceDegrees)) {
+			DateTime fine = date.addMinutes(current, -kCoarseStepMinutes + 1);
+			double finePrevious = previousUnwrapped;
+			for (int minute = 1; minute <= kCoarseStepMinutes; ++minute) {
+				TempoMoonPhase finePhase = date.moonPhase(fine);
+				if (!finePhase.ok) {
+					return false;
+				}
+				const double fineCurrent =
+				    unwrapAngle(finePrevious, static_cast<double>(finePhase.angleDegrees));
+				if (!valueWithinPeriodicWindow(finePrevious, spec.moonPhaseAngleDegrees,
+				                               spec.moonPhaseToleranceDegrees) &&
+				    segmentIntersectsPeriodicWindow(finePrevious, fineCurrent,
+				                                    spec.moonPhaseAngleDegrees,
+				                                    spec.moonPhaseToleranceDegrees)) {
+					outNextUtc = fine;
+					return true;
+				}
+				finePrevious = fineCurrent;
+				fine = date.addMinutes(fine, 1);
+			}
 		}
-
 		previousUnwrapped = currentUnwrapped;
-		current = date.addMinutes(current, 1);
 	}
 	return false;
 }
@@ -236,31 +243,42 @@ bool computeNextMoonIlluminationOccurrence(
 	}
 	double previousIllumination = previousPhase.illumination * 100.0;
 
-	for (int64_t minuteIndex = 0; minuteIndex < kMaxMoonSearchMinutes; ++minuteIndex) {
+	const double minWindow =
+	    spec.moonIlluminationTargetPercent - spec.moonIlluminationTolerancePercent;
+	const double maxWindow =
+	    spec.moonIlluminationTargetPercent + spec.moonIlluminationTolerancePercent;
+	constexpr int kCoarseStepMinutes = 60;
+	for (int64_t elapsed = 0; elapsed < kMaxMoonSearchMinutes; elapsed += kCoarseStepMinutes) {
+		current = date.addMinutes(rounded, elapsed + kCoarseStepMinutes);
 		TempoMoonPhase currentPhase = date.moonPhase(current);
 		if (!currentPhase.ok) {
 			return false;
 		}
-
 		const double currentIllumination = currentPhase.illumination * 100.0;
-		const double minWindow =
-		    spec.moonIlluminationTargetPercent - spec.moonIlluminationTolerancePercent;
-		const double maxWindow =
-		    spec.moonIlluminationTargetPercent + spec.moonIlluminationTolerancePercent;
 		const bool wasInside = previousIllumination >= minWindow - kComparisonEpsilon &&
 		                       previousIllumination <= maxWindow + kComparisonEpsilon;
-		if (!wasInside && segmentIntersectsRange(
-		                      previousIllumination,
-		                      currentIllumination,
-		                      minWindow,
-		                      maxWindow
-		                  )) {
-			outNextUtc = current;
-			return true;
+		if (!wasInside && segmentIntersectsRange(previousIllumination, currentIllumination,
+		                                         minWindow, maxWindow)) {
+			DateTime fine = date.addMinutes(current, -kCoarseStepMinutes + 1);
+			double finePrevious = previousIllumination;
+			for (int minute = 1; minute <= kCoarseStepMinutes; ++minute) {
+				TempoMoonPhase finePhase = date.moonPhase(fine);
+				if (!finePhase.ok) {
+					return false;
+				}
+				const double fineCurrent = finePhase.illumination * 100.0;
+				const bool fineWasInside = finePrevious >= minWindow - kComparisonEpsilon &&
+				                           finePrevious <= maxWindow + kComparisonEpsilon;
+				if (!fineWasInside &&
+				    segmentIntersectsRange(finePrevious, fineCurrent, minWindow, maxWindow)) {
+					outNextUtc = fine;
+					return true;
+				}
+				finePrevious = fineCurrent;
+				fine = date.addMinutes(fine, 1);
+			}
 		}
-
 		previousIllumination = currentIllumination;
-		current = date.addMinutes(current, 1);
 	}
 	return false;
 }

@@ -16,6 +16,14 @@ extern "C" {
 }
 
 namespace {
+bool validSchedulerConfig(const SchedulerConfig &config) {
+	return config.service.commandQueueDepth > 0 && config.service.eventQueueDepth > 0 &&
+	       config.service.taskStackSize > 0 && config.service.controlTimeoutMs > 0 &&
+	       config.defaultWorkerPool.workerCount > 0 &&
+	       config.defaultWorkerPool.queueDepth > 0 && config.defaultWorkerPool.stackSize > 0 &&
+	       config.defaultDedicatedTask.stackSize > 0;
+}
+
 template <typename TCommand, typename TResult, typename FBuild>
 TResult executeBackgroundCommand(
     SchedulerService &service,
@@ -215,6 +223,9 @@ TempoScheduler::~TempoScheduler() {
 }
 
 SchedulerResult<void> TempoScheduler::init(Tempo &date, const SchedulerConfig &config) {
+	if (!validSchedulerConfig(config)) {
+		return SchedulerResult<void>::failure(SchedulerError::InvalidConfiguration);
+	}
 	if (impl_ && impl_->started) {
 		return SchedulerResult<void>::failure(SchedulerError::AlreadyInitialized);
 	}
@@ -227,7 +238,7 @@ SchedulerResult<void> TempoScheduler::init(Tempo &date, const SchedulerConfig &c
 }
 
 bool TempoScheduler::init() {
-	if (!impl_) {
+	if (!impl_ || !validSchedulerConfig(impl_->config)) {
 		return false;
 	}
 	if (impl_->started) {
