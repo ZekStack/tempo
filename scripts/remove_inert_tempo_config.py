@@ -11,6 +11,16 @@ def replace_once(path: str, old: str, new: str) -> None:
     target.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
+def inject_timezone_scope(signature: str) -> None:
+    scope = (
+        signature
+        + "\n\tUtils::ScopedTz scopedTimeZone(\n"
+        + "\t    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_\n"
+        + "\t);"
+    )
+    replace_once("src/internal/tempo_date/date.cpp", signature, scope)
+
+
 replace_once(
     "src/internal/tempo_date/date.h",
     '''\tuint8_t sunCycleCalculationHour = 4;
@@ -64,6 +74,106 @@ replace_once(
 
 ''',
     "",
+)
+
+for signature in (
+    "DateTime Tempo::fromLocal(int year, int month, int day, int hour, int minute, int second) const {",
+    "DateTime Tempo::startOfDayLocal(const DateTime &dt) const {",
+    "DateTime Tempo::addCalendarDaysLocal(const DateTime &dt, int days) const {",
+    "DateTime Tempo::startOfMonthLocal(const DateTime &dt) const {",
+    "DateTime Tempo::endOfMonthLocal(const DateTime &dt) const {",
+    "DateTime Tempo::startOfYearLocal(const DateTime &dt) const {",
+    "DateTime Tempo::setTimeOfDayLocal(const DateTime &dt, int hour, int minute, int second) const {",
+    "int Tempo::getYearLocal(const DateTime &dt) const {",
+    "int Tempo::getMonthLocal(const DateTime &dt) const {",
+    "int Tempo::getDayLocal(const DateTime &dt) const {",
+    "int Tempo::getWeekdayLocal(const DateTime &dt) const {",
+    "Tempo::ParseResult Tempo::parseDateTimeLocal(const char *str) const {",
+):
+    inject_timezone_scope(signature)
+
+inject_timezone_scope(
+    '''bool Tempo::formatWithPatternLocal(
+    const DateTime &dt, const char *pattern, char *outBuffer, size_t outSize
+) const {'''
+)
+
+replace_once(
+    "src/internal/tempo_date/date.cpp",
+    '''bool Tempo::dateTimeToStringLocal(
+    const DateTime &dt, char *outBuffer, size_t outSize, TempoFormat style
+) const {
+\treturn dt.localString(outBuffer, outSize, style);
+}
+''',
+    '''bool Tempo::dateTimeToStringLocal(
+    const DateTime &dt, char *outBuffer, size_t outSize, TempoFormat style
+) const {
+\treturn formatLocal(dt, style, outBuffer, outSize);
+}
+''',
+)
+replace_once(
+    "src/internal/tempo_date/date.cpp",
+    '''bool Tempo::lastNtpSyncStringUtc(char *outBuffer, size_t outSize, TempoFormat style) const {
+\tif (!hasLastNtpSync_) {
+\t\treturn false;
+\t}
+\treturn dateTimeToStringUtc(lastNtpSync_, outBuffer, outSize, style);
+}
+
+bool Tempo::lastNtpSyncStringLocal(char *outBuffer, size_t outSize, TempoFormat style) const {
+\tif (!hasLastNtpSync_) {
+\t\treturn false;
+\t}
+\treturn dateTimeToStringLocal(lastNtpSync_, outBuffer, outSize, style);
+}
+''',
+    '''bool Tempo::lastNtpSyncStringUtc(char *outBuffer, size_t outSize, TempoFormat style) const {
+\tif (!hasLastNtpSync()) {
+\t\treturn false;
+\t}
+\treturn dateTimeToStringUtc(lastNtpSync(), outBuffer, outSize, style);
+}
+
+bool Tempo::lastNtpSyncStringLocal(char *outBuffer, size_t outSize, TempoFormat style) const {
+\tif (!hasLastNtpSync()) {
+\t\treturn false;
+\t}
+\treturn dateTimeToStringLocal(lastNtpSync(), outBuffer, outSize, style);
+}
+''',
+)
+replace_once(
+    "src/internal/tempo_date/date.cpp",
+    '''std::string Tempo::lastNtpSyncStringUtc(TempoFormat style) const {
+\tif (!hasLastNtpSync_) {
+\t\treturn std::string();
+\t}
+\treturn dateTimeToStringUtc(lastNtpSync_, style);
+}
+
+std::string Tempo::lastNtpSyncStringLocal(TempoFormat style) const {
+\tif (!hasLastNtpSync_) {
+\t\treturn std::string();
+\t}
+\treturn dateTimeToStringLocal(lastNtpSync_, style);
+}
+''',
+    '''std::string Tempo::lastNtpSyncStringUtc(TempoFormat style) const {
+\tif (!hasLastNtpSync()) {
+\t\treturn std::string();
+\t}
+\treturn dateTimeToStringUtc(lastNtpSync(), style);
+}
+
+std::string Tempo::lastNtpSyncStringLocal(TempoFormat style) const {
+\tif (!hasLastNtpSync()) {
+\t\treturn std::string();
+\t}
+\treturn dateTimeToStringLocal(lastNtpSync(), style);
+}
+''',
 )
 
 Path("scripts/remove_inert_tempo_config.py").unlink(missing_ok=True)
