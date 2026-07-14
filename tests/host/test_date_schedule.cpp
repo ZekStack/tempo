@@ -20,8 +20,7 @@ void expect(bool condition, const char *message) {
 	++failures;
 }
 
-Tempo makeBudapestTempo(bool withLocation = false) {
-	Tempo tempo;
+void initBudapestTempo(Tempo &tempo, bool withLocation = false) {
 	TempoConfig config;
 	config.timeZone = kBudapestTz;
 	if (withLocation) {
@@ -29,11 +28,11 @@ Tempo makeBudapestTempo(bool withLocation = false) {
 		config.longitude = 19.0402f;
 	}
 	expect(static_cast<bool>(tempo.init(config)), "Tempo initialization should succeed");
-	return tempo;
 }
 
 void testInvalidParsing() {
-	Tempo tempo = makeBudapestTempo();
+	Tempo tempo;
+	initBudapestTempo(tempo);
 	expect(!tempo.parseLocal("not-a-date").ok, "invalid local input must remain invalid");
 	expect(!tempo.parseDateTimeLocal("2026-03-29 02:30:00").ok,
 	       "nonexistent DST spring-forward local time must be rejected");
@@ -42,7 +41,8 @@ void testInvalidParsing() {
 }
 
 void testDstDayBoundaries() {
-	Tempo tempo = makeBudapestTempo();
+	Tempo tempo;
+	initBudapestTempo(tempo);
 
 	const DateTime springNoon = tempo.fromUtc(2026, 3, 29, 12, 0, 0);
 	const DateTime springStart = tempo.startOfDayLocal(springNoon);
@@ -58,7 +58,8 @@ void testDstDayBoundaries() {
 }
 
 void testAmbiguousRoundTrip() {
-	Tempo tempo = makeBudapestTempo();
+	Tempo tempo;
+	initBudapestTempo(tempo);
 	const DateTime firstOccurrence = tempo.fromUtc(2026, 10, 25, 0, 30, 0);
 	const DateTime secondOccurrence = tempo.fromUtc(2026, 10, 25, 1, 30, 0);
 
@@ -76,7 +77,8 @@ void testAmbiguousRoundTrip() {
 }
 
 void testCalendarSchedulingAcrossDst() {
-	Tempo tempo = makeBudapestTempo();
+	Tempo tempo;
+	initBudapestTempo(tempo);
 	const DateTime beforeSpring = tempo.fromLocal(2026, 3, 28, 8, 30, 0);
 	const DateTime next = tempo.nextDailyAtLocal(8, 0, 0, beforeSpring);
 	const LocalDateTime local = tempo.toLocal(next);
@@ -86,7 +88,8 @@ void testCalendarSchedulingAcrossDst() {
 }
 
 void testIndependentInstanceTimezones() {
-	Tempo budapest = makeBudapestTempo();
+	Tempo budapest;
+	initBudapestTempo(budapest);
 	Tempo tokyo;
 	TempoConfig tokyoConfig;
 	tokyoConfig.timeZone = kTokyoTz;
@@ -121,11 +124,13 @@ void testIndependentInstanceTimezones() {
 }
 
 void testLocationAndSunDateHandling() {
-	Tempo withoutLocation = makeBudapestTempo();
+	Tempo withoutLocation;
+	initBudapestTempo(withoutLocation);
 	expect(!withoutLocation.sunrise().ok,
 	       "default configuration must not silently use latitude/longitude zero");
 
-	Tempo tempo = makeBudapestTempo(true);
+	Tempo tempo;
+	initBudapestTempo(tempo, true);
 	const DateTime summerNoon = tempo.fromLocal(2026, 6, 21, 12, 0, 0);
 	const DateTime summerMidnight = tempo.fromLocal(2026, 6, 21, 0, 0, 0);
 	expect(tempo.sunrise(summerNoon).ok && tempo.sunset(summerNoon).ok,
@@ -153,7 +158,8 @@ void testScheduleValidation() {
 	           ScheduleField::any())),
 	       "out-of-range bits in custom schedule fields must be rejected");
 
-	Tempo tempo = makeBudapestTempo();
+	Tempo tempo;
+	initBudapestTempo(tempo);
 	DateTime next{};
 	const DateTime from = tempo.fromLocal(2026, 7, 14, 10, 7, 15);
 	expect(ScheduleCalculator::computeNext(tempo, TempoSchedule::everyMinutes(15), from, next),
