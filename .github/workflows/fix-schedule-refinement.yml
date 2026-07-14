@@ -1,0 +1,32 @@
+name: Fix schedule refinement
+
+on:
+  push:
+    branches:
+      - agent/tempo-v0.1.0-hardening
+    paths:
+      - scripts/fix_schedule_refinement.py
+      - .github/workflows/fix-schedule-refinement.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/tempo-v0.1.0-hardening
+          fetch-depth: 0
+      - name: Apply correction
+        run: python3 scripts/fix_schedule_refinement.py
+      - name: Validate and commit
+        run: |
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix sun and moon schedule refinement"
+          git push origin HEAD:agent/tempo-v0.1.0-hardening
