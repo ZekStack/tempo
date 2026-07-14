@@ -20,17 +20,21 @@ if text.count(old_background) != 1:
     raise RuntimeError("background shutdown block did not match")
 text = text.replace(old_background, new_background, 1)
 
-old_manual = '''\t\timpl_->stopExecutors(waitForRunningJobs);
+old_manual = '''\t\tif (impl_->runtime) {
+\t\t\tif (!waitForRunningJobs) {
+\t\t\t\timpl_->runtime->eventQueue.store(nullptr);
+\t\t\t\timpl_->runtime->accepting.store(false);
+\t\t\t}
+\t\t}
+\t\timpl_->stopExecutors(waitForRunningJobs);
 \t\tif (impl_->eventQueue) {
-\t\t\tvQueueDelete(impl_->eventQueue);
 '''
-new_manual = '''\t\timpl_->stopExecutors(waitForRunningJobs);
-\t\tif (impl_->runtime) {
+new_manual = '''\t\tif (impl_->runtime) {
 \t\t\timpl_->runtime->eventQueue.store(nullptr);
 \t\t\timpl_->runtime->accepting.store(false);
 \t\t}
+\t\timpl_->stopExecutors(waitForRunningJobs);
 \t\tif (impl_->eventQueue) {
-\t\t\tvQueueDelete(impl_->eventQueue);
 '''
 if text.count(old_manual) != 1:
     raise RuntimeError("manual shutdown block did not match")
