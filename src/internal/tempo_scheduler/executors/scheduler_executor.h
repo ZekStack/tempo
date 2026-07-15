@@ -12,7 +12,7 @@ extern "C" {
 
 struct SchedulerExecutorRuntime {
 	std::atomic<bool> accepting{true};
-	QueueHandle_t eventQueue = nullptr;
+	std::atomic<QueueHandle_t> eventQueue{nullptr};
 };
 
 enum class CallbackKind : uint8_t {

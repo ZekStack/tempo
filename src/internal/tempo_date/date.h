@@ -4,6 +4,8 @@
 #include <Arduino.h>
 #include <functional>
 #include <initializer_list>
+#include <limits>
+#include <mutex>
 #include <stdint.h>
 #include <string>
 #include <time.h>
@@ -111,14 +113,15 @@ struct LocalDateTime {
 	int second = 0;
 	int offsetMinutes = 0; // local - UTC
 	DateTime utc{};
+	bool hasResolvedUtc = false;
 
 	bool localString(char *outBuffer, size_t outSize) const;
 	std::string localString() const;
 };
 
 struct TempoConfig {
-	float latitude = 0.0f;
-	float longitude = 0.0f;
+	float latitude = std::numeric_limits<float>::quiet_NaN();
+	float longitude = std::numeric_limits<float>::quiet_NaN();
 	const char *timezone = nullptr;
 	const char *timeZone = nullptr; // POSIX TZ string, e.g. "CET-1CEST,M3.5.0/2,M10.5.0/3"
 	std::vector<const char *> ntpServers{};
@@ -128,13 +131,7 @@ struct TempoConfig {
 	bool usePSRAMBuffers = false;   // prefer PSRAM for Tempo-owned config/state text buffers
 	const char *ntpServer2 = nullptr; // optional secondary NTP server
 	const char *ntpServer3 = nullptr; // optional tertiary NTP server
-	uint8_t sunCycleCalculationHour = 4;
-	uint8_t sunCycleCalculationMinute = 0;
 	uint32_t sunCycleMatchWindowSeconds = 60;
-	uint32_t taskStackSize = 6848;
-	UBaseType_t taskPriority = 1;
-	BaseType_t taskCoreId = tskNO_AFFINITY;
-	const char *taskName = "tempo-task";
 	int64_t minValidUnixSeconds = 1577836800;
 };
 
@@ -206,7 +203,6 @@ class Tempo {
 	bool isValidTime() const;
 	uint64_t unixSeconds() const;
 	uint64_t unixSeconds(const DateTime &dt) const;
-	void setSunCycleCalculationTime(uint8_t hour, uint8_t minute);
 
 	DateTime now() const;
 	DateTime nowUtc() const; // alias of now(), returns the raw system clock (UTC)
@@ -450,7 +446,9 @@ class Tempo {
 	TempoSunEventResult sunriseFromConfig(const DateTime &day) const;
 	TempoSunEventResult sunsetFromConfig(const DateTime &day) const;
 	bool isDayWithOffsets(const DateTime &day, int sunRiseOffsetSec, int sunSetOffsetSec) const;
+	TempoSunCycle sunCycleFor(const DateTime &day);
 	bool refreshSunCycleCache(const DateTime &day);
+	DateTime addCalendarDaysLocal(const DateTime &dt, int days) const;
 	bool inSunWindow(const DateTime &dt, const DateTime &event, const TempoDuration &offset) const;
 
 	float latitude_ = 0.0f;
@@ -474,12 +472,12 @@ class Tempo {
 	static NtpSyncCallback activeNtpSyncCallback_;
 	static NtpSyncCallable activeNtpSyncCallbackCallable_;
 	static Tempo *activeNtpSyncOwner_;
+	static std::recursive_mutex ntpMutex_;
 	bool hasLocation_ = false;
 	bool initialized_ = false;
 	int64_t minValidUnixSeconds_ = 1577836800;
-	uint8_t sunCycleCalculationHour_ = 4;
-	uint8_t sunCycleCalculationMinute_ = 0;
 	uint32_t sunCycleMatchWindowSeconds_ = 60;
+	mutable std::recursive_mutex sunCycleMutex_{};
 	TempoSunCycle sunCycleCache_{};
 
   public:

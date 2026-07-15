@@ -1,5 +1,6 @@
 #include "schedule_spec.h"
 
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -127,14 +128,22 @@ TempoSchedule TempoSchedule::onceUtc(const DateTime &whenUtc) {
 
 TempoSchedule TempoSchedule::everyMinutes(int minutes) {
 	TempoSchedule spec;
-	spec.minute = ScheduleField::every(minutes);
+	if (minutes <= 0 || minutes > 60) {
+		spec.minute = ScheduleField{};
+		return spec;
+	}
+	spec.minute = ScheduleField::rangeEvery(0, 59, minutes);
 	return spec;
 }
 
 TempoSchedule TempoSchedule::everyHours(int hours) {
 	TempoSchedule spec;
+	if (hours <= 0 || hours > 24) {
+		spec.hour = ScheduleField{};
+		return spec;
+	}
 	spec.minute = ScheduleField::only(0);
-	spec.hour = ScheduleField::every(hours);
+	spec.hour = ScheduleField::rangeEvery(0, 23, hours);
 	return spec;
 }
 
@@ -161,7 +170,7 @@ TempoSchedule TempoSchedule::weeklyAtLocal(uint8_t dowMask, int hour, int minute
 	TempoSchedule spec;
 	spec.hour = ScheduleField::only(hour);
 	spec.minute = ScheduleField::only(minute);
-	spec.dayOfWeek = count == 0 ? ScheduleField::any() : ScheduleField::list(days, count);
+	spec.dayOfWeek = count == 0 ? ScheduleField{} : ScheduleField::list(days, count);
 	return spec;
 }
 
@@ -171,10 +180,9 @@ TempoSchedule TempoSchedule::atDays(uint8_t dowMask, int hour, int minute) {
 
 TempoSchedule TempoSchedule::monthlyOnDayLocal(int dayOfMonth, int hour, int minute) {
 	TempoSchedule spec;
-	if (dayOfMonth < 1) {
-		dayOfMonth = 1;
-	} else if (dayOfMonth > 31) {
-		dayOfMonth = 31;
+	if (dayOfMonth < 1 || dayOfMonth > 31) {
+		spec.dayOfMonth = ScheduleField{};
+		return spec;
 	}
 	spec.dayOfMonth = ScheduleField::only(dayOfMonth);
 	spec.hour = ScheduleField::only(hour);
@@ -212,6 +220,10 @@ TempoSchedule TempoSchedule::cron(const char *expression) {
 	}
 
 	char buffer[96];
+	if (std::strlen(expression) >= sizeof(buffer)) {
+		spec.minute = ScheduleField{};
+		return spec;
+	}
 	std::strncpy(buffer, expression, sizeof(buffer) - 1);
 	buffer[sizeof(buffer) - 1] = '\0';
 
@@ -219,21 +231,24 @@ TempoSchedule TempoSchedule::cron(const char *expression) {
 	size_t count = 0;
 	char *cursor = buffer;
 	while (*cursor != '\0' && count < 5) {
-		while (*cursor == ' ') {
+		while (*cursor != '\0' && std::isspace(static_cast<unsigned char>(*cursor))) {
 			++cursor;
 		}
 		if (*cursor == '\0') {
 			break;
 		}
 		fields[count++] = cursor;
-		while (*cursor != '\0' && *cursor != ' ') {
+		while (*cursor != '\0' && !std::isspace(static_cast<unsigned char>(*cursor))) {
 			++cursor;
 		}
-		if (*cursor == ' ') {
+		if (*cursor != '\0') {
 			*cursor++ = '\0';
 		}
 	}
-	if (count != 5) {
+	while (*cursor != '\0' && std::isspace(static_cast<unsigned char>(*cursor))) {
+		++cursor;
+	}
+	if (count != 5 || *cursor != '\0') {
 		spec.minute = ScheduleField{};
 		return spec;
 	}

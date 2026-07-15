@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 
 #include "../core/scheduler_core.h"
 
@@ -9,22 +10,37 @@ extern "C" {
 #include "freertos/semphr.h"
 }
 
+enum class SchedulerCommandState : uint8_t {
+	Pending = 0,
+	Executing,
+	Completed,
+	Canceled,
+};
+
 class SchedulerServiceCommand {
   public:
 	SchedulerServiceCommand();
 	virtual ~SchedulerServiceCommand();
 
+	void retain();
+	void release();
 	bool wait(uint32_t timeoutMs);
-	void signal();
-	void abandon();
-	bool abandoned() const;
+	bool waitForever();
+	bool cancelPending();
+	bool tryBeginExecution();
+	void complete();
+	void cancelAndSignal();
+	SchedulerCommandState state() const;
 
 	virtual void execute(SchedulerCore &core, Tempo &date, IExecutorResolver &executors) = 0;
 
   private:
+	void signal();
+
 	SemaphoreHandle_t completion_ = nullptr;
 	StaticSemaphore_t completionBuffer_{};
-	std::atomic<bool> abandoned_{false};
+	std::atomic<uint32_t> referenceCount_{1};
+	std::atomic<SchedulerCommandState> state_{SchedulerCommandState::Pending};
 };
 
 class AddJobCommand : public SchedulerServiceCommand {
@@ -88,8 +104,8 @@ class JobCountCommand : public SchedulerServiceCommand {
 class GetJobInfoCommand : public SchedulerServiceCommand {
   public:
 	uint32_t jobId = 0;
-	JobInfo *info = nullptr;
-	SchedulerResult<void> result = SchedulerResult<void>::failure(SchedulerError::NotInitialized);
+	SchedulerResult<JobInfo> result =
+	    SchedulerResult<JobInfo>::failure(SchedulerError::NotInitialized);
 
 	void execute(SchedulerCore &core, Tempo &date, IExecutorResolver &executors) override;
 };

@@ -16,6 +16,14 @@ extern "C" {
 }
 
 namespace {
+bool validSchedulerConfig(const SchedulerConfig &config) {
+	return config.service.commandQueueDepth > 0 && config.service.eventQueueDepth > 0 &&
+	       config.service.taskStackSize > 0 && config.service.controlTimeoutMs > 0 &&
+	       config.defaultWorkerPool.workerCount > 0 &&
+	       config.defaultWorkerPool.queueDepth > 0 && config.defaultWorkerPool.stackSize > 0 &&
+	       config.defaultDedicatedTask.stackSize > 0;
+}
+
 template <typename TCommand, typename TResult, typename FBuild>
 TResult executeBackgroundCommand(
     SchedulerService &service,
@@ -24,21 +32,32 @@ TResult executeBackgroundCommand(
     SchedulerError timeoutError,
     FBuild &&build
 ) {
+	if (service.isCurrentTask()) {
+		return TResult::failure(SchedulerError::Busy);
+	}
 	TCommand *command = new (std::nothrow) TCommand();
 	if (!command) {
 		return TResult::failure(SchedulerError::NoMemory);
 	}
 	build(*command);
+	command->retain();
 	if (!service.send(command)) {
-		delete command;
+		command->release();
+		command->release();
 		return TResult::failure(queueError);
 	}
 	if (!command->wait(timeoutMs)) {
-		command->abandon();
-		return TResult::failure(timeoutError);
+		if (command->cancelPending()) {
+			command->release();
+			return TResult::failure(timeoutError);
+		}
+		if (!command->waitForever()) {
+			command->release();
+			return TResult::failure(SchedulerError::InternalError);
+		}
 	}
 	TResult result = command->result;
-	delete command;
+	command->release();
 	return result;
 }
 } // namespace
@@ -204,6 +223,9 @@ TempoScheduler::~TempoScheduler() {
 }
 
 SchedulerResult<void> TempoScheduler::init(Tempo &date, const SchedulerConfig &config) {
+	if (!validSchedulerConfig(config)) {
+		return SchedulerResult<void>::failure(SchedulerError::InvalidConfiguration);
+	}
 	if (impl_ && impl_->started) {
 		return SchedulerResult<void>::failure(SchedulerError::AlreadyInitialized);
 	}
@@ -216,7 +238,7 @@ SchedulerResult<void> TempoScheduler::init(Tempo &date, const SchedulerConfig &c
 }
 
 bool TempoScheduler::init() {
-	if (!impl_) {
+	if (!impl_ || !validSchedulerConfig(impl_->config)) {
 		return false;
 	}
 	if (impl_->started) {
@@ -242,7 +264,7 @@ bool TempoScheduler::init() {
 			impl_->runtime.reset();
 			return false;
 		}
-		impl_->runtime->eventQueue = impl_->service->eventQueue();
+		impl_->runtime->eventQueue.store(impl_->service->eventQueue());
 	} else {
 		impl_->eventQueue =
 		    xQueueCreate(impl_->config.service.eventQueueDepth, sizeof(SchedulerEvent));
@@ -250,7 +272,7 @@ bool TempoScheduler::init() {
 			impl_->runtime.reset();
 			return false;
 		}
-		impl_->runtime->eventQueue = impl_->eventQueue;
+		impl_->runtime->eventQueue.store(impl_->eventQueue);
 	}
 
 	impl_->started = true;
@@ -269,6 +291,10 @@ bool TempoScheduler::init() {
 
 void TempoScheduler::end(bool waitForRunningJobs, uint32_t timeoutMs) {
 	if (!impl_ || !impl_->started) {
+		return;
+	}
+	if (impl_->config.mode == TempoSchedulerMode::Background && impl_->service &&
+	    impl_->service->isCurrentTask()) {
 		return;
 	}
 
@@ -294,11 +320,15 @@ void TempoScheduler::end(bool waitForRunningJobs, uint32_t timeoutMs) {
 		if (impl_->runtime) {
 			impl_->runtime->accepting.store(waitForRunningJobs);
 			if (!waitForRunningJobs) {
-				impl_->runtime->eventQueue = nullptr;
+				impl_->runtime->eventQueue.store(nullptr);
 				impl_->runtime->accepting.store(false);
 			}
 		}
 		impl_->stopExecutors(waitForRunningJobs);
+		if (impl_->runtime) {
+			impl_->runtime->eventQueue.store(nullptr);
+			impl_->runtime->accepting.store(false);
+		}
 		impl_->service->stop();
 		impl_->service.reset();
 	} else {
@@ -310,10 +340,8 @@ void TempoScheduler::end(bool waitForRunningJobs, uint32_t timeoutMs) {
 			vTaskDelay(pdMS_TO_TICKS(10));
 		}
 		if (impl_->runtime) {
-			if (!waitForRunningJobs) {
-				impl_->runtime->eventQueue = nullptr;
-				impl_->runtime->accepting.store(false);
-			}
+			impl_->runtime->eventQueue.store(nullptr);
+			impl_->runtime->accepting.store(false);
 		}
 		impl_->stopExecutors(waitForRunningJobs);
 		if (impl_->eventQueue) {
@@ -323,7 +351,7 @@ void TempoScheduler::end(bool waitForRunningJobs, uint32_t timeoutMs) {
 	}
 
 	if (impl_->runtime) {
-		impl_->runtime->eventQueue = nullptr;
+		impl_->runtime->eventQueue.store(nullptr);
 		impl_->runtime->accepting.store(false);
 		impl_->runtime.reset();
 	}
@@ -664,16 +692,20 @@ SchedulerResult<void> TempoScheduler::getJobInfo(uint32_t jobId, JobInfo &out) c
 		return SchedulerResult<void>::failure(SchedulerError::NotInitialized);
 	}
 	if (impl_->config.mode == TempoSchedulerMode::Background && impl_->service) {
-		return executeBackgroundCommand<GetJobInfoCommand, SchedulerResult<void>>(
-		    *impl_->service,
-		    impl_->config.service.controlTimeoutMs,
-		    SchedulerError::QueueFull,
-		    SchedulerError::Timeout,
-		    [&](GetJobInfoCommand &command) {
-			    command.jobId = jobId;
-			    command.info = &out;
-		    }
-		);
+		const SchedulerResult<JobInfo> result =
+		    executeBackgroundCommand<GetJobInfoCommand, SchedulerResult<JobInfo>>(
+		        *impl_->service,
+		        impl_->config.service.controlTimeoutMs,
+		        SchedulerError::QueueFull,
+		        SchedulerError::Timeout,
+		        [&](GetJobInfoCommand &command) { command.jobId = jobId; }
+		    );
+		if (!result) {
+			out = JobInfo{};
+			return SchedulerResult<void>::failure(result.error);
+		}
+		out = result.value;
+		return SchedulerResult<void>::success();
 	}
 	return impl_->manualCore.getJobInfo(jobId, out);
 }

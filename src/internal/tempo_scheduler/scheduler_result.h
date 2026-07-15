@@ -8,6 +8,7 @@ enum class SchedulerError : uint8_t {
 	NotInitialized,
 	AlreadyInitialized,
 	InvalidSchedule,
+	InvalidConfiguration,
 	NoMemory,
 	QueueFull,
 	NotFound,

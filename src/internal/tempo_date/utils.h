@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <limits>
+#include <mutex>
 
 class TempoUtils {
   public:
@@ -13,10 +14,19 @@ class TempoUtils {
 	static constexpr int64_t kSecondsPerHour = 60 * kSecondsPerMinute;
 	static constexpr int64_t kSecondsPerDay = 24 * kSecondsPerHour;
 
+	class TimezoneLock {
+	  public:
+		TimezoneLock() : lock_(timezoneMutex()) {
+		}
+
+	  private:
+		std::unique_lock<std::recursive_mutex> lock_;
+	};
+
 	class ScopedTz {
 	  public:
 		explicit ScopedTz(const char *tz, bool usePSRAMBuffers = false)
-		    : previous_(DateAllocator<char>(usePSRAMBuffers)) {
+		    : lock_(timezoneMutex()), previous_(DateAllocator<char>(usePSRAMBuffers)) {
 			if (!tz) {
 				return;
 			}
@@ -63,6 +73,7 @@ class TempoUtils {
 		}
 
 	  private:
+		std::unique_lock<std::recursive_mutex> lock_;
 		bool active_ = false;
 		bool hadPrevious_ = false;
 		DateString previous_;
@@ -82,6 +93,7 @@ class TempoUtils {
 	}
 
 	static bool toLocalTm(const DateTime &dt, tm &out) {
+		TimezoneLock lock;
 		if (dt.epochSeconds > static_cast<int64_t>(std::numeric_limits<time_t>::max()) ||
 		    dt.epochSeconds < static_cast<int64_t>(std::numeric_limits<time_t>::min())) {
 			return false;
@@ -99,6 +111,7 @@ class TempoUtils {
 	}
 
 	static DateTime fromLocalTm(const tm &t) {
+		TimezoneLock lock;
 		tm copy = t;
 		time_t raw = mktime(&copy);
 		return DateTime{static_cast<int64_t>(raw)};
@@ -134,6 +147,18 @@ class TempoUtils {
 		return day;
 	}
 
+	static void setProcessTimeZone(const char *timeZone) {
+		TimezoneLock lock;
+		const char *tz = (timeZone && timeZone[0] != '\0') ? timeZone : "UTC0";
+#if defined(_WIN32)
+		_putenv_s("TZ", tz);
+		_tzset();
+#else
+		setenv("TZ", tz, 1);
+		tzset();
+#endif
+	}
+
 	static bool
 	isDstActiveFor(const DateTime &dt, const char *timeZone, bool usePSRAMBuffers = false) {
 		ScopedTz scoped(timeZone, usePSRAMBuffers);
@@ -166,6 +191,11 @@ class TempoUtils {
 	}
 
   private:
+	static std::recursive_mutex &timezoneMutex() {
+		static std::recursive_mutex mutex;
+		return mutex;
+	}
+
 	static int64_t daysFromCivil(int year, unsigned month, unsigned day) {
 		year -= month <= 2;
 		const int era = (year >= 0 ? year : year - 399) / 400;

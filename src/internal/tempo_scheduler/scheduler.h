@@ -44,9 +44,12 @@ struct SchedulerJobOptions {
 	const DedicatedTaskOptions *dedicatedTask = nullptr;
 };
 
+static constexpr size_t kSchedulerJobNameCapacity = 48;
+
 struct JobInfo {
 	uint32_t id = 0;
-	const char *name = nullptr;
+	char name[kSchedulerJobNameCapacity]{};
+	bool nameTruncated = false;
 	bool paused = false;
 	bool running = false;
 	bool queuedWhileRunning = false;

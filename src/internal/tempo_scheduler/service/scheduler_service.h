@@ -33,6 +33,7 @@ class SchedulerService {
 	void stop();
 
 	bool send(SchedulerServiceCommand *command);
+	bool isCurrentTask() const;
 
 	QueueHandle_t eventQueue() const {
 		return eventQueue_;

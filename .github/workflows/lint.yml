@@ -1,4 +1,4 @@
-name: Lint (Advisory)
+name: Lint
 
 on:
   pull_request:
@@ -6,20 +6,23 @@ on:
     branches:
       - '**'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   metadata_lint:
-    name: Metadata Lint (advisory)
+    name: Metadata Lint
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify library metadata
-        run: grep -qx 'name=Tempo' library.properties
+      - name: Verify release metadata
+        run: python3 scripts/check_version.py
 
       - name: Arduino Lint
         uses: arduino/arduino-lint-action@v1

@@ -4,7 +4,8 @@
 #include "runtime_containers.h"
 
 struct JobRecord {
-	explicit JobRecord(bool usePSRAMMetadata = false) : name(usePSRAMMetadata) {
+	explicit JobRecord(bool usePSRAMMetadata = false)
+	    : name(usePSRAMMetadata), dedicatedTaskName(usePSRAMMetadata) {
 	}
 
 	uint32_t id = 0;
@@ -28,6 +29,7 @@ struct JobRecord {
 	DateTime scheduleFromUtc{};
 	CallbackRef callback{};
 	SchedulerOwnedString name{};
+	SchedulerOwnedString dedicatedTaskName{};
 	DedicatedTaskOptions dedicatedTask{};
 	bool hasDedicatedTaskOptions = false;
 };

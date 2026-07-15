@@ -12,7 +12,7 @@ bool postCompletion(
     uint32_t generation,
     size_t slotIndex
 ) {
-	if (!runtime || !runtime->accepting.load() || runtime->eventQueue == nullptr) {
+	if (!runtime) {
 		return false;
 	}
 	SchedulerEvent event{};
@@ -20,7 +20,16 @@ bool postCompletion(
 	event.jobId = jobId;
 	event.generation = generation;
 	event.slotIndex = slotIndex;
-	return xQueueSend(runtime->eventQueue, &event, 0) == pdTRUE;
+	while (runtime->accepting.load(std::memory_order_acquire)) {
+		QueueHandle_t queue = runtime->eventQueue.load(std::memory_order_acquire);
+		if (!queue) {
+			return false;
+		}
+		if (xQueueSend(queue, &event, pdMS_TO_TICKS(50)) == pdTRUE) {
+			return true;
+		}
+	}
+	return false;
 }
 } // namespace
 
@@ -61,6 +70,7 @@ bool WorkerPoolExecutor::begin(const std::shared_ptr<SchedulerExecutorRuntime> &
 			return false;
 		}
 		context->owner = this;
+		context->createdWithCaps = config_.usePsramStack;
 
 		TaskHandle_t handle = nullptr;
 		bool createdWithCaps = false;
@@ -80,7 +90,6 @@ bool WorkerPoolExecutor::begin(const std::shared_ptr<SchedulerExecutorRuntime> &
 			end(false);
 			return false;
 		}
-		context->createdWithCaps = createdWithCaps;
 		if (!workers_.pushBack({handle, createdWithCaps})) {
 			scheduler_task_support::deleteTask(handle, createdWithCaps);
 			end(false);
@@ -94,8 +103,8 @@ bool WorkerPoolExecutor::begin(const std::shared_ptr<SchedulerExecutorRuntime> &
 }
 
 void WorkerPoolExecutor::end(bool drainRunningJobs) {
+	started_.store(false);
 	if (!queue_) {
-		started_.store(false);
 		runtime_.reset();
 		return;
 	}
@@ -109,10 +118,12 @@ void WorkerPoolExecutor::end(bool drainRunningJobs) {
 
 	for (size_t index = 0; index < workers_.size(); ++index) {
 		TaskItem *sentinel = nullptr;
-		xQueueSend(queue_, &sentinel, 0);
+		while (workersRunning_.load() > 0 &&
+		       xQueueSend(queue_, &sentinel, pdMS_TO_TICKS(50)) != pdTRUE) {
+		}
 	}
 
-	const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
+	const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(3000);
 	while (workersRunning_.load() > 0 && xTaskGetTickCount() < deadline) {
 		vTaskDelay(pdMS_TO_TICKS(10));
 	}
@@ -124,14 +135,16 @@ void WorkerPoolExecutor::end(bool drainRunningJobs) {
 			    workers_[index].createdWithCaps
 			);
 		}
+		workersRunning_.store(0);
 	}
 
-	if (queue_) {
-		vQueueDelete(queue_);
-		queue_ = nullptr;
+	TaskItem *pending = nullptr;
+	while (xQueueReceive(queue_, &pending, 0) == pdTRUE) {
+		delete pending;
 	}
+	vQueueDelete(queue_);
+	queue_ = nullptr;
 	workers_.clear();
-	started_.store(false);
 	runtime_.reset();
 }
 
@@ -181,7 +194,7 @@ void WorkerPoolExecutor::workerTaskEntry(void *arg) {
 
 		item->invocation.callback.invoke();
 		postCompletion(
-		    owner->runtime_,
+		    item->invocation.runtime,
 		    item->invocation.jobId,
 		    item->invocation.generation,
 		    item->invocation.slotIndex
