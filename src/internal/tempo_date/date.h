@@ -312,7 +312,7 @@ class Tempo {
 	int getWeekdayLocal(const DateTime &dt) const; // 0=Sunday..6=Saturday
 
 	bool isLeapYear(int year) const;
-	int daysInMonth(int year) const;
+	int daysInMonth(int year, int month) const; // month: 1..12
 
 	// Formatting
 	bool formatUtc(const DateTime &dt, TempoFormat style, char *outBuffer, size_t outSize) const;
