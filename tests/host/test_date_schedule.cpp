@@ -141,6 +141,28 @@ void testLocationAndSunDateHandling() {
 	       "sunrise matching must use the supplied date rather than today's cache");
 }
 
+void testRuntimeLocationUpdate() {
+	Tempo tempo;
+	initBudapestTempo(tempo, true);
+	const DateTime instant = tempo.fromUtc(2026, 1, 15, 12, 0, 0);
+	expect(tempo.toLocal(instant).hour == 13,
+	       "runtime location test must start in the Budapest timezone");
+
+	TempoResult updated = tempo.updateLocation(35.6762f, 139.6503f, kTokyoTz);
+	expect(static_cast<bool>(updated), "runtime location update should succeed");
+	const LocalDateTime tokyoLocal = tempo.toLocal(instant);
+	expect(tokyoLocal.ok && tokyoLocal.hour == 21,
+	       "runtime location update must replace the instance timezone immediately");
+	expect(tempo.sunrise(instant).ok && tempo.sunset(instant).ok,
+	       "runtime location update must retain a valid configured sun location");
+
+	TempoResult invalid = tempo.updateLocation(91.0f, 139.6503f, kTokyoTz);
+	expect(!invalid && invalid.status == TempoStatus::InvalidArgument,
+	       "invalid runtime coordinates must be rejected");
+	expect(tempo.toLocal(instant).hour == 21,
+	       "rejected runtime location update must not alter the existing timezone");
+}
+
 void testScheduleValidation() {
 	expect(!ScheduleCalculator::validate(TempoSchedule::everyMinutes(90)),
 	       "everyMinutes values above 60 must be rejected");
@@ -177,6 +199,7 @@ int main() {
 	testCalendarSchedulingAcrossDst();
 	testIndependentInstanceTimezones();
 	testLocationAndSunDateHandling();
+	testRuntimeLocationUpdate();
 	testScheduleValidation();
 
 	if (failures != 0) {
