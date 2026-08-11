@@ -167,6 +167,7 @@ class Tempo {
 	Tempo();
 	~Tempo();
 	TempoResult init(const TempoConfig &config = TempoConfig());
+	TempoResult updateLocation(float latitude, float longitude, const char *timeZone);
 	void deinit();
 	bool isInitialized() const {
 		return initialized_;
@@ -311,7 +312,7 @@ class Tempo {
 	int getWeekdayLocal(const DateTime &dt) const; // 0=Sunday..6=Saturday
 
 	bool isLeapYear(int year) const;
-	int daysInMonth(int year, int month) const; // month: 1..12
+	int daysInMonth(int year) const;
 
 	// Formatting
 	bool formatUtc(const DateTime &dt, TempoFormat style, char *outBuffer, size_t outSize) const;
