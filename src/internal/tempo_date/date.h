@@ -167,6 +167,7 @@ class Tempo {
 	Tempo();
 	~Tempo();
 	TempoResult init(const TempoConfig &config = TempoConfig());
+	TempoResult updateLocation(float latitude, float longitude, const char *timeZone);
 	void deinit();
 	bool isInitialized() const {
 		return initialized_;

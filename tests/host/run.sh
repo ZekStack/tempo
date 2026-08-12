@@ -16,6 +16,7 @@ CXX="${CXX:-g++}"
   -I"${ROOT_DIR}/tests/host/stubs" \
   -I"${ROOT_DIR}/src" \
   "${ROOT_DIR}/src/internal/tempo_date/date.cpp" \
+  "${ROOT_DIR}/src/internal/tempo_date/location.cpp" \
   "${ROOT_DIR}/src/internal/tempo_date/sun.cpp" \
   "${ROOT_DIR}/src/internal/tempo_date/moon.cpp" \
   "${ROOT_DIR}/src/internal/tempo_scheduler/schedule/schedule_field.cpp" \
