@@ -8,10 +8,15 @@ CallbackRef makeEmptyCallback() {
 }
 } // namespace
 
-SchedulerCore::SchedulerCore(Tempo &date, int64_t minValidEpochSeconds, bool usePSRAMMetadata)
-    : date_(date), minValidEpochSeconds_(minValidEpochSeconds), usePSRAMMetadata_(usePSRAMMetadata),
-      jobs_(usePSRAMMetadata), freeSlots_(usePSRAMMetadata), pendingSchedules_(usePSRAMMetadata),
-      jobIndex_(usePSRAMMetadata), dueHeap_(usePSRAMMetadata) {
+SchedulerCore::SchedulerCore(
+    Tempo &date,
+    int64_t minValidEpochSeconds,
+    Strata::Placement allocationPlacement
+)
+    : date_(date), minValidEpochSeconds_(minValidEpochSeconds),
+      allocationPlacement_(allocationPlacement), jobs_(allocationPlacement),
+      freeSlots_(allocationPlacement), pendingSchedules_(allocationPlacement),
+      jobIndex_(allocationPlacement), dueHeap_(allocationPlacement) {
 }
 
 void SchedulerCore::setMinValidUnixSeconds(int64_t minEpochSeconds) {
@@ -182,7 +187,7 @@ SchedulerResult<uint32_t> SchedulerCore::addJob(
 		return SchedulerResult<uint32_t>::failure(SchedulerError::InvalidSchedule);
 	}
 
-	JobRecord record(usePSRAMMetadata_);
+	JobRecord record(allocationPlacement_);
 	record.occupied = true;
 	record.id = nextId_++;
 	record.schedule = schedule;
@@ -229,7 +234,7 @@ SchedulerResult<uint32_t> SchedulerCore::addJob(
 	if (!jobIndex_.set(jobs_[slotIndex].id, slotIndex)) {
 		jobIndex_.remove(jobs_[slotIndex].id);
 		if (reusedSlot) {
-			JobRecord empty(usePSRAMMetadata_);
+			JobRecord empty(allocationPlacement_);
 			empty.generation = reusedGeneration;
 			jobs_[slotIndex] = std::move(empty);
 			freeSlots_.pushBack(slotIndex);
@@ -247,7 +252,7 @@ SchedulerResult<uint32_t> SchedulerCore::addJob(
 		} else if (!queueScheduling(slotIndex, nowUtc)) {
 			jobIndex_.remove(jobs_[slotIndex].id);
 			if (reusedSlot) {
-				JobRecord empty(usePSRAMMetadata_);
+				JobRecord empty(allocationPlacement_);
 				empty.generation = reusedGeneration;
 				jobs_[slotIndex] = std::move(empty);
 				freeSlots_.pushBack(slotIndex);
