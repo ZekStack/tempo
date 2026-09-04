@@ -49,7 +49,7 @@ SchedulerService::SchedulerService(
     int64_t minValidEpochSeconds,
     std::atomic<bool> &timeContextRefreshRequested,
     IExecutorResolver &executors
-)
+) noexcept
     : date_(date), config_(config), memory_(memory),
       core_(date, minValidEpochSeconds, memory.allocation),
       timeContextRefreshRequested_(timeContextRefreshRequested), executors_(executors) {
@@ -166,11 +166,6 @@ bool SchedulerService::postEvent(const SchedulerEvent &event) {
 	}
 	(void)wake_.give();
 	return true;
-}
-
-bool SchedulerService::postEventThunk(void *context, const SchedulerEvent &event) {
-	auto *service = static_cast<SchedulerService *>(context);
-	return service != nullptr && service->postEvent(event);
 }
 
 bool SchedulerService::isCurrentTask() const {
