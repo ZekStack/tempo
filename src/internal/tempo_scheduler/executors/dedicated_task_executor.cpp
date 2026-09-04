@@ -37,7 +37,7 @@ struct DedicatedTaskExecutor::TaskRecord {
 DedicatedTaskExecutor::DedicatedTaskExecutor(
     Strata::Placement allocationPlacement,
     Strata::Placement defaultStackPlacement
-)
+) noexcept
     : allocationPlacement_(allocationPlacement), defaultStackPlacement_(defaultStackPlacement),
       tasks_(allocationPlacement) {
 }
