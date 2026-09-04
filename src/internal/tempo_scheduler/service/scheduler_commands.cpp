@@ -1,14 +1,7 @@
 #include "scheduler_commands.h"
 
-SchedulerServiceCommand::SchedulerServiceCommand() {
-	completion_ = xSemaphoreCreateBinaryStatic(&completionBuffer_);
-}
-
-SchedulerServiceCommand::~SchedulerServiceCommand() {
-	if (completion_) {
-		vSemaphoreDelete(completion_);
-		completion_ = nullptr;
-	}
+SchedulerServiceCommand::SchedulerServiceCommand() noexcept
+    : completion_(Strata::FreeRTOS::BinarySemaphore::create()) {
 }
 
 void SchedulerServiceCommand::retain() {
@@ -16,23 +9,21 @@ void SchedulerServiceCommand::retain() {
 }
 
 void SchedulerServiceCommand::release() {
-	if (referenceCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-		delete this;
+	if (referenceCount_.fetch_sub(1, std::memory_order_acq_rel) != 1) {
+		return;
+	}
+	DestroyFn destroy = destroy_;
+	if (destroy) {
+		destroy(this);
 	}
 }
 
 bool SchedulerServiceCommand::wait(uint32_t timeoutMs) {
-	if (!completion_) {
-		return false;
-	}
-	return xSemaphoreTake(completion_, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+	return completion_ && completion_.take(pdMS_TO_TICKS(timeoutMs));
 }
 
 bool SchedulerServiceCommand::waitForever() {
-	if (!completion_) {
-		return false;
-	}
-	return xSemaphoreTake(completion_, portMAX_DELAY) == pdTRUE;
+	return completion_ && completion_.take(portMAX_DELAY);
 }
 
 bool SchedulerServiceCommand::cancelPending() {
@@ -78,7 +69,7 @@ SchedulerCommandState SchedulerServiceCommand::state() const {
 
 void SchedulerServiceCommand::signal() {
 	if (completion_) {
-		xSemaphoreGive(completion_);
+		(void)completion_.give();
 	}
 }
 
