@@ -14,7 +14,7 @@ class WorkerPoolExecutor : public ISchedulerExecutor {
 	    const WorkerPoolConfig &config,
 	    Strata::Placement allocationPlacement,
 	    Strata::Placement defaultStackPlacement
-	);
+	) noexcept;
 	~WorkerPoolExecutor() override;
 
 	bool begin(const std::shared_ptr<SchedulerExecutorRuntime> &runtime) override;
