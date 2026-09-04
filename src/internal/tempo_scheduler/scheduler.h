@@ -1,10 +1,10 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Strata.h>
 #include "../tempo_date/date.h"
 
 #include <functional>
-#include <memory>
 #include <string>
 
 extern "C" {
@@ -169,5 +169,5 @@ class TempoScheduler {
 	    const TempoSchedule &schedule, const SchedulerJobOptions &options, const CallbackRef &callback
 	);
 
-	std::unique_ptr<Impl> impl_;
+	Strata::UniquePtr<Impl> impl_{};
 };
