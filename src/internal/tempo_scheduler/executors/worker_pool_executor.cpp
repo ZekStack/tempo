@@ -42,7 +42,7 @@ WorkerPoolExecutor::WorkerPoolExecutor(
     const WorkerPoolConfig &config,
     Strata::Placement allocationPlacement,
     Strata::Placement defaultStackPlacement
-)
+) noexcept
     : config_(config), allocationPlacement_(allocationPlacement),
       defaultStackPlacement_(defaultStackPlacement), workers_(allocationPlacement) {
 }
