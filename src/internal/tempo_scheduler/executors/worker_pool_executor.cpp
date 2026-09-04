@@ -1,11 +1,15 @@
 #include "worker_pool_executor.h"
 
-#include <new>
-
 #include "../service/scheduler_events.h"
-#include "task_support.h"
 
 namespace {
+[[noreturn]] void suspendForever() {
+	vTaskSuspend(nullptr);
+	for (;;) {
+		vTaskDelay(portMAX_DELAY);
+	}
+}
+
 bool postCompletion(
     const std::shared_ptr<SchedulerExecutorRuntime> &runtime,
     uint32_t jobId,
@@ -15,21 +19,12 @@ bool postCompletion(
 	if (!runtime) {
 		return false;
 	}
-	SchedulerEvent event{};
-	event.kind = SchedulerEventKind::JobFinished;
-	event.jobId = jobId;
-	event.generation = generation;
-	event.slotIndex = slotIndex;
-	while (runtime->accepting.load(std::memory_order_acquire)) {
-		QueueHandle_t queue = runtime->eventQueue.load(std::memory_order_acquire);
-		if (!queue) {
-			return false;
-		}
-		if (xQueueSend(queue, &event, pdMS_TO_TICKS(50)) == pdTRUE) {
-			return true;
-		}
-	}
-	return false;
+	return runtime->publish(SchedulerEvent{
+	    .kind = SchedulerEventKind::JobFinished,
+	    .jobId = jobId,
+	    .generation = generation,
+	    .slotIndex = slotIndex,
+	});
 }
 } // namespace
 
@@ -37,13 +32,19 @@ struct WorkerPoolExecutor::TaskItem {
 	JobInvocation invocation{};
 };
 
-struct WorkerPoolExecutor::WorkerContext {
+struct WorkerPoolExecutor::WorkerRecord {
 	WorkerPoolExecutor *owner = nullptr;
-	bool createdWithCaps = false;
+	Strata::FreeRTOS::Task task{};
+	std::atomic<bool> readyForDelete{false};
 };
 
-WorkerPoolExecutor::WorkerPoolExecutor(const WorkerPoolConfig &config)
-    : config_(config), workers_(false) {
+WorkerPoolExecutor::WorkerPoolExecutor(
+    const WorkerPoolConfig &config,
+    Strata::Placement allocationPlacement,
+    Strata::Placement defaultStackPlacement
+)
+    : config_(config), allocationPlacement_(allocationPlacement),
+      defaultStackPlacement_(defaultStackPlacement), workers_(allocationPlacement) {
 }
 
 WorkerPoolExecutor::~WorkerPoolExecutor() {
@@ -54,97 +55,116 @@ bool WorkerPoolExecutor::begin(const std::shared_ptr<SchedulerExecutorRuntime> &
 	if (started_.load()) {
 		return true;
 	}
+	if (!runtime) {
+		return false;
+	}
 
 	runtime_ = runtime;
-	queue_ = xQueueCreate(config_.queueDepth, sizeof(TaskItem *));
+	queue_ = Strata::FreeRTOS::Queue<TaskItem *>::create({
+	    .length = config_.queueDepth,
+	    .storagePlacement = allocationPlacement_,
+	    .usage = Strata::FreeRTOS::QueueUsage::TaskOnly,
+	});
 	if (!queue_) {
+		runtime_.reset();
 		return false;
 	}
 
 	workers_.clear();
-	workersRunning_.store(0);
+	const Strata::Placement stackPlacement =
+	    config_.stackPlacement.value_or(defaultStackPlacement_);
 	for (uint8_t index = 0; index < config_.workerCount; ++index) {
-		WorkerContext *context = new (std::nothrow) WorkerContext{};
-		if (!context) {
+		auto worker = Strata::makeUnique<WorkerRecord>(allocationPlacement_);
+		if (!worker) {
 			end(false);
 			return false;
 		}
-		context->owner = this;
-		context->createdWithCaps = config_.usePsramStack;
+		worker->owner = this;
+		WorkerRecord *record = worker.get();
+		if (!workers_.pushBack(std::move(worker))) {
+			end(false);
+			return false;
+		}
 
-		TaskHandle_t handle = nullptr;
-		bool createdWithCaps = false;
-		const BaseType_t created = scheduler_task_support::createTaskPinned(
+		auto task = Strata::FreeRTOS::Task::create(
 		    &WorkerPoolExecutor::workerTaskEntry,
-		    "sched-pool",
-		    config_.stackSize,
-		    context,
-		    config_.priority,
-		    &handle,
-		    config_.coreId,
-		    config_.usePsramStack,
-		    createdWithCaps
+		    record,
+		    Strata::FreeRTOS::TaskConfig{
+		        .name = "sched-pool",
+		        .stackBytes = config_.stackSize,
+		        .stackPlacement = stackPlacement,
+		        .priority = config_.priority,
+		        .affinity = config_.coreId,
+		    }
 		);
-		if (created != pdPASS || handle == nullptr) {
-			delete context;
+		if (!task) {
+			workers_.popBack();
 			end(false);
 			return false;
 		}
-		if (!workers_.pushBack({handle, createdWithCaps})) {
-			scheduler_task_support::deleteTask(handle, createdWithCaps);
-			end(false);
-			return false;
-		}
-		workersRunning_.fetch_add(1);
+		record->task = std::move(task);
 	}
 
 	started_.store(true);
 	return true;
 }
 
+void WorkerPoolExecutor::destroyPendingItems() {
+	if (!queue_) {
+		return;
+	}
+	TaskItem *pending = nullptr;
+	while (queue_.receive(pending, 0)) {
+		if (pending) {
+			Strata::destroy(pending);
+		}
+	}
+}
+
 void WorkerPoolExecutor::end(bool drainRunningJobs) {
 	started_.store(false);
 	if (!queue_) {
+		workers_.clear();
 		runtime_.reset();
 		return;
 	}
 
 	if (!drainRunningJobs) {
-		TaskItem *pending = nullptr;
-		while (xQueueReceive(queue_, &pending, 0) == pdTRUE) {
-			delete pending;
-		}
+		destroyPendingItems();
 	}
 
 	for (size_t index = 0; index < workers_.size(); ++index) {
 		TaskItem *sentinel = nullptr;
-		while (workersRunning_.load() > 0 &&
-		       xQueueSend(queue_, &sentinel, pdMS_TO_TICKS(50)) != pdTRUE) {
+		while (!queue_.send(sentinel, pdMS_TO_TICKS(50))) {
+			if (!drainRunningJobs) {
+				destroyPendingItems();
+			}
 		}
 	}
 
 	const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(3000);
-	while (workersRunning_.load() > 0 && xTaskGetTickCount() < deadline) {
+	for (;;) {
+		bool allReady = true;
+		for (size_t index = 0; index < workers_.size(); ++index) {
+			if (workers_[index] && !workers_[index]->readyForDelete.load(std::memory_order_acquire)) {
+				allReady = false;
+				break;
+			}
+		}
+		if (allReady || xTaskGetTickCount() >= deadline) {
+			break;
+		}
 		vTaskDelay(pdMS_TO_TICKS(10));
 	}
 
-	if (workersRunning_.load() > 0) {
-		for (size_t index = 0; index < workers_.size(); ++index) {
-			scheduler_task_support::deleteTask(
-			    workers_[index].task,
-			    workers_[index].createdWithCaps
-			);
+	for (size_t index = 0; index < workers_.size(); ++index) {
+		if (workers_[index] && workers_[index]->task) {
+			workers_[index]->task.reset();
 		}
-		workersRunning_.store(0);
 	}
-
-	TaskItem *pending = nullptr;
-	while (xQueueReceive(queue_, &pending, 0) == pdTRUE) {
-		delete pending;
-	}
-	vQueueDelete(queue_);
-	queue_ = nullptr;
 	workers_.clear();
+	destroyPendingItems();
+	queue_.reset();
 	runtime_.reset();
 }
 
@@ -152,16 +172,15 @@ bool WorkerPoolExecutor::submit(const JobInvocation &invocation) {
 	if (!queue_ || !started_.load()) {
 		return false;
 	}
-
-	TaskItem *item = new (std::nothrow) TaskItem{};
+	auto item = Strata::makeUnique<TaskItem>(allocationPlacement_);
 	if (!item) {
 		return false;
 	}
 	item->invocation = invocation;
 	item->invocation.runtime = runtime_;
-
-	if (xQueueSend(queue_, &item, 0) != pdTRUE) {
-		delete item;
+	TaskItem *rawItem = item.release();
+	if (!queue_.send(rawItem, 0)) {
+		Strata::destroy(rawItem);
 		return false;
 	}
 	return true;
@@ -172,20 +191,15 @@ const char *WorkerPoolExecutor::name() const {
 }
 
 void WorkerPoolExecutor::workerTaskEntry(void *arg) {
-	WorkerContext *context = static_cast<WorkerContext *>(arg);
-	if (!context || !context->owner) {
-		delete context;
-		vTaskDelete(nullptr);
-		return;
+	auto *record = static_cast<WorkerRecord *>(arg);
+	if (!record || !record->owner) {
+		suspendForever();
 	}
 
-	WorkerPoolExecutor *owner = context->owner;
-	const bool createdWithCaps = context->createdWithCaps;
-	delete context;
-
-	while (true) {
+	WorkerPoolExecutor *owner = record->owner;
+	for (;;) {
 		TaskItem *item = nullptr;
-		if (xQueueReceive(owner->queue_, &item, portMAX_DELAY) != pdTRUE) {
+		if (!owner->queue_.receive(item, portMAX_DELAY)) {
 			continue;
 		}
 		if (!item) {
@@ -199,9 +213,9 @@ void WorkerPoolExecutor::workerTaskEntry(void *arg) {
 		    item->invocation.generation,
 		    item->invocation.slotIndex
 		);
-		delete item;
+		Strata::destroy(item);
 	}
 
-	owner->workersRunning_.fetch_sub(1);
-	scheduler_task_support::deleteCurrentTask(createdWithCaps);
+	record->readyForDelete.store(true, std::memory_order_release);
+	suspendForever();
 }
