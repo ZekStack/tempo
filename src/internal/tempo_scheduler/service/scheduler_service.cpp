@@ -1,12 +1,15 @@
 #include "scheduler_service.h"
 
-#include <new>
-
-#include "../executors/task_support.h"
-
 namespace {
 constexpr uint32_t kIdlePollMs = 1000;
+
+[[noreturn]] void suspendForever() {
+	vTaskSuspend(nullptr);
+	for (;;) {
+		vTaskDelay(portMAX_DELAY);
+	}
 }
+} // namespace
 
 TickType_t scheduler_service_detail::nextWakeTicks(
     Tempo &date,
@@ -42,12 +45,13 @@ TickType_t scheduler_service_detail::nextWakeTicks(
 SchedulerService::SchedulerService(
     Tempo &date,
     const SchedulerServiceConfig &config,
+    const Strata::MemoryPolicy &memory,
     int64_t minValidEpochSeconds,
-    bool usePSRAMMetadata,
     std::atomic<bool> &timeContextRefreshRequested,
     IExecutorResolver &executors
-)
-    : date_(date), config_(config), core_(date, minValidEpochSeconds, usePSRAMMetadata),
+) noexcept
+    : date_(date), config_(config), memory_(memory),
+      core_(date, minValidEpochSeconds, memory.allocation),
       timeContextRefreshRequested_(timeContextRefreshRequested), executors_(executors) {
 }
 
@@ -61,77 +65,70 @@ bool SchedulerService::begin() {
 	}
 
 	stopRequested_.store(false);
-	taskExited_.store(false);
-	commandQueue_ = xQueueCreate(config_.commandQueueDepth, sizeof(SchedulerServiceCommand *));
-	eventQueue_ = xQueueCreate(config_.eventQueueDepth, sizeof(SchedulerEvent));
-	if (!commandQueue_ || !eventQueue_) {
+	taskReadyForDelete_.store(false);
+	activeInvocationCount_.store(0);
+
+	commandQueue_ = Strata::FreeRTOS::Queue<SchedulerServiceCommand *>::create({
+	    .length = config_.commandQueueDepth,
+	    .storagePlacement = memory_.allocation,
+	    .usage = Strata::FreeRTOS::QueueUsage::TaskOnly,
+	});
+	eventQueue_ = Strata::FreeRTOS::Queue<SchedulerEvent>::create({
+	    .length = config_.eventQueueDepth,
+	    .storagePlacement = memory_.allocation,
+	    .usage = Strata::FreeRTOS::QueueUsage::TaskOnly,
+	});
+	wake_ = Strata::FreeRTOS::BinarySemaphore::create();
+	if (!commandQueue_ || !eventQueue_ || !wake_) {
 		stop();
 		return false;
 	}
 
-	queueSet_ = xQueueCreateSet(config_.commandQueueDepth + config_.eventQueueDepth);
-	if (!queueSet_) {
-		stop();
-		return false;
-	}
-	xQueueAddToSet(commandQueue_, queueSet_);
-	xQueueAddToSet(eventQueue_, queueSet_);
-
-	bool createdWithCaps = false;
-	const BaseType_t created = scheduler_task_support::createTaskPinned(
+	const Strata::Placement stackPlacement = config_.stackPlacement.value_or(memory_.taskStack);
+	auto task = Strata::FreeRTOS::Task::create(
 	    &SchedulerService::taskEntry,
-	    "sched-svc",
-	    config_.taskStackSize,
 	    this,
-	    config_.taskPriority,
-	    &task_,
-	    config_.coreId,
-	    config_.usePsramStack,
-	    createdWithCaps
+	    Strata::FreeRTOS::TaskConfig{
+	        .name = "sched-svc",
+	        .stackBytes = config_.taskStackSize,
+	        .stackPlacement = stackPlacement,
+	        .priority = config_.taskPriority,
+	        .affinity = config_.coreId,
+	    }
 	);
-	if (created != pdPASS || task_ == nullptr) {
+	if (!task) {
 		stop();
 		return false;
 	}
-	taskCreatedWithCaps_ = createdWithCaps;
-
+	task_ = std::move(task);
 	started_.store(true);
 	return true;
 }
 
 void SchedulerService::stop() {
-	if (!commandQueue_ && !eventQueue_ && !queueSet_ && !task_) {
+	if (!commandQueue_ && !eventQueue_ && !wake_ && !task_) {
 		started_.store(false);
 		return;
 	}
 
 	stopRequested_.store(true);
-	SchedulerServiceCommand *wake = nullptr;
-	if (commandQueue_) {
-		xQueueSend(commandQueue_, &wake, 0);
+	if (wake_) {
+		(void)wake_.give();
 	}
 
 	const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(3000);
-	while (task_ && !taskExited_.load() && xTaskGetTickCount() < deadline) {
+	while (task_ && !taskReadyForDelete_.load(std::memory_order_acquire) &&
+	       xTaskGetTickCount() < deadline) {
 		vTaskDelay(pdMS_TO_TICKS(10));
 	}
 
-	if (task_ && !taskExited_.load()) {
-		scheduler_task_support::deleteTask(task_, taskCreatedWithCaps_);
+	if (task_) {
+		task_.reset();
 	}
-	task_ = nullptr;
-	taskCreatedWithCaps_ = false;
 
-	if (queueSet_) {
-		vQueueDelete(queueSet_);
-		queueSet_ = nullptr;
-	}
 	if (commandQueue_) {
-		while (true) {
-			SchedulerServiceCommand *pending = nullptr;
-			if (xQueueReceive(commandQueue_, &pending, 0) != pdTRUE) {
-				break;
-			}
+		SchedulerServiceCommand *pending = nullptr;
+		while (commandQueue_.receive(pending, 0)) {
 			if (!pending) {
 				continue;
 			}
@@ -139,50 +136,59 @@ void SchedulerService::stop() {
 			pending->release();
 		}
 	}
-	if (commandQueue_) {
-		vQueueDelete(commandQueue_);
-		commandQueue_ = nullptr;
-	}
-	if (eventQueue_) {
-		vQueueDelete(eventQueue_);
-		eventQueue_ = nullptr;
-	}
 
-	taskExited_.store(false);
+	commandQueue_.reset();
+	eventQueue_.reset();
+	wake_.reset();
+	taskReadyForDelete_.store(false);
 	stopRequested_.store(false);
+	activeInvocationCount_.store(0);
 	started_.store(false);
 }
 
 bool SchedulerService::send(SchedulerServiceCommand *command) {
-	if (!commandQueue_) {
+	if (!commandQueue_ || !wake_) {
 		return false;
 	}
-	return xQueueSend(commandQueue_, &command, 0) == pdTRUE;
+	if (command != nullptr && !commandQueue_.send(command, 0)) {
+		return false;
+	}
+	(void)wake_.give();
+	return true;
+}
+
+bool SchedulerService::postEvent(const SchedulerEvent &event) {
+	if (!eventQueue_ || !wake_) {
+		return false;
+	}
+	if (!eventQueue_.send(event, 0)) {
+		return false;
+	}
+	(void)wake_.give();
+	return true;
 }
 
 bool SchedulerService::isCurrentTask() const {
-	return task_ != nullptr && xTaskGetCurrentTaskHandle() == task_;
+	return task_ && xTaskGetCurrentTaskHandle() == task_.handle();
 }
 
 void SchedulerService::taskEntry(void *arg) {
-	SchedulerService *service = static_cast<SchedulerService *>(arg);
+	auto *service = static_cast<SchedulerService *>(arg);
 	if (!service) {
-		vTaskDelete(nullptr);
-		return;
+		suspendForever();
 	}
 	service->run();
-	service->taskExited_.store(true);
-	service->task_ = nullptr;
-	scheduler_task_support::deleteCurrentTask(service->taskCreatedWithCaps_);
+	service->taskReadyForDelete_.store(true, std::memory_order_release);
+	suspendForever();
 }
 
 void SchedulerService::drainCommands() {
 	if (!commandQueue_) {
 		return;
 	}
-	while (true) {
+	for (;;) {
 		SchedulerServiceCommand *command = nullptr;
-		if (xQueueReceive(commandQueue_, &command, 0) != pdTRUE) {
+		if (!commandQueue_.receive(command, 0)) {
 			break;
 		}
 		if (!command) {
@@ -200,9 +206,9 @@ void SchedulerService::drainEvents() {
 	if (!eventQueue_) {
 		return;
 	}
-	while (true) {
+	for (;;) {
 		SchedulerEvent event{};
-		if (xQueueReceive(eventQueue_, &event, 0) != pdTRUE) {
+		if (!eventQueue_.receive(event, 0)) {
 			break;
 		}
 		core_.handleEvent(event, date_.now(), executors_);
@@ -226,9 +232,10 @@ void SchedulerService::refreshTimeContextIfNeeded(const DateTime &nowUtc) {
 }
 
 void SchedulerService::run() {
-	while (!stopRequested_.load()) {
+	while (!stopRequested_.load(std::memory_order_acquire)) {
 		drainCommands();
 		drainEvents();
+		executors_.reapCompletedExecutors();
 
 		const DateTime nowUtc = date_.now();
 		refreshTimeContextIfNeeded(nowUtc);
@@ -240,18 +247,18 @@ void SchedulerService::run() {
 		if (core_.clockValid(nowUtc)) {
 			const bool hasNextDue = core_.nextDueEpoch(nextEpochSeconds);
 			waitTicks = scheduler_service_detail::nextWakeTicks(
-			    date_,
-			    nowUtc,
-			    hasNextDue,
-			    nextEpochSeconds,
-			    waitTicks
+			    date_, nowUtc, hasNextDue, nextEpochSeconds, waitTicks
 			);
 		}
 
-		QueueSetMemberHandle_t ready =
-		    queueSet_ ? xQueueSelectFromSet(queueSet_, waitTicks) : nullptr;
-		if (!ready) {
-			continue;
+		if (wake_) {
+			(void)wake_.take(waitTicks);
+		} else {
+			vTaskDelay(waitTicks);
 		}
 	}
+
+	drainCommands();
+	drainEvents();
+	executors_.reapCompletedExecutors();
 }

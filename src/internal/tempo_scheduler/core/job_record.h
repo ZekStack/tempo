@@ -4,8 +4,8 @@
 #include "runtime_containers.h"
 
 struct JobRecord {
-	explicit JobRecord(bool usePSRAMMetadata = false)
-	    : name(usePSRAMMetadata), dedicatedTaskName(usePSRAMMetadata) {
+	explicit JobRecord(Strata::Placement placement = Strata::Placement::PreferExternal)
+	    : name(placement), dedicatedTaskName(placement) {
 	}
 
 	uint32_t id = 0;

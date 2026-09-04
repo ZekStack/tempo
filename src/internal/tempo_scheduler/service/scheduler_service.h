@@ -3,6 +3,10 @@
 #include <atomic>
 #include <memory>
 
+#include <strata/freertos/BinarySemaphore.h>
+#include <strata/freertos/Queue.h>
+#include <strata/freertos/Task.h>
+
 #include "../core/scheduler_core.h"
 #include "../executors/scheduler_executor.h"
 #include "scheduler_commands.h"
@@ -22,22 +26,19 @@ class SchedulerService {
 	SchedulerService(
 	    Tempo &date,
 	    const SchedulerServiceConfig &config,
+	    const Strata::MemoryPolicy &memory,
 	    int64_t minValidEpochSeconds,
-	    bool usePSRAMMetadata,
 	    std::atomic<bool> &timeContextRefreshRequested,
 	    IExecutorResolver &executors
-	);
+	) noexcept;
 	~SchedulerService();
 
 	bool begin();
 	void stop();
 
 	bool send(SchedulerServiceCommand *command);
+	bool postEvent(const SchedulerEvent &event);
 	bool isCurrentTask() const;
-
-	QueueHandle_t eventQueue() const {
-		return eventQueue_;
-	}
 
 	size_t activeInvocationCount() const {
 		return activeInvocationCount_.load();
@@ -53,20 +54,20 @@ class SchedulerService {
 
 	Tempo &date_;
 	SchedulerServiceConfig config_{};
+	Strata::MemoryPolicy memory_{};
 	SchedulerCore core_;
 	std::atomic<bool> &timeContextRefreshRequested_;
 	IExecutorResolver &executors_;
 	DateTime lastObservedLocalDayStartUtc_{};
 	bool hasLastObservedLocalDayStartUtc_ = false;
 
-	QueueHandle_t commandQueue_ = nullptr;
-	QueueHandle_t eventQueue_ = nullptr;
-	QueueSetHandle_t queueSet_ = nullptr;
-	TaskHandle_t task_ = nullptr;
-	bool taskCreatedWithCaps_ = false;
+	Strata::FreeRTOS::Queue<SchedulerServiceCommand *> commandQueue_{};
+	Strata::FreeRTOS::Queue<SchedulerEvent> eventQueue_{};
+	Strata::FreeRTOS::BinarySemaphore wake_{};
+	Strata::FreeRTOS::Task task_{};
 
 	std::atomic<bool> started_{false};
 	std::atomic<bool> stopRequested_{false};
-	std::atomic<bool> taskExited_{false};
+	std::atomic<bool> taskReadyForDelete_{false};
 	std::atomic<size_t> activeInvocationCount_{0};
 };
