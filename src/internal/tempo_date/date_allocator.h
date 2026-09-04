@@ -13,6 +13,9 @@ template <typename T> class DateAllocator {
 	DateAllocator() noexcept = default;
 	explicit DateAllocator(Strata::Placement placement) noexcept : placement_(placement) {
 	}
+	explicit DateAllocator(bool preferExternal) noexcept
+	    : placement_(preferExternal ? Strata::Placement::PreferExternal : Strata::Placement::Internal) {
+	}
 
 	template <typename U>
 	DateAllocator(const DateAllocator<U> &other) noexcept : placement_(other.placement()) {
