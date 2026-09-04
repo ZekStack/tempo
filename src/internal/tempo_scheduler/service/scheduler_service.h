@@ -30,7 +30,7 @@ class SchedulerService {
 	    int64_t minValidEpochSeconds,
 	    std::atomic<bool> &timeContextRefreshRequested,
 	    IExecutorResolver &executors
-	);
+	) noexcept;
 	~SchedulerService();
 
 	bool begin();
@@ -46,7 +46,6 @@ class SchedulerService {
 
   private:
 	static void taskEntry(void *arg);
-	static bool postEventThunk(void *context, const SchedulerEvent &event);
 
 	void run();
 	void drainCommands();
