@@ -8,7 +8,11 @@
 
 class SchedulerCore {
   public:
-	SchedulerCore(Tempo &date, int64_t minValidEpochSeconds, bool usePSRAMMetadata);
+	SchedulerCore(
+	    Tempo &date,
+	    int64_t minValidEpochSeconds,
+	    Strata::Placement allocationPlacement = Strata::Placement::PreferExternal
+	);
 
 	void setMinValidUnixSeconds(int64_t minEpochSeconds);
 	int64_t minValidUnixSeconds() const;
@@ -56,7 +60,7 @@ class SchedulerCore {
 
 	Tempo &date_;
 	int64_t minValidEpochSeconds_ = 0;
-	bool usePSRAMMetadata_ = false;
+	Strata::Placement allocationPlacement_ = Strata::Placement::PreferExternal;
 	uint32_t nextId_ = 1;
 	SchedulerArray<JobRecord> jobs_{};
 	SchedulerArray<size_t> freeSlots_{};
