@@ -1,11 +1,15 @@
 #include "dedicated_task_executor.h"
 
-#include <new>
-
 #include "../service/scheduler_events.h"
-#include "task_support.h"
 
 namespace {
+[[noreturn]] void suspendForever() {
+	vTaskSuspend(nullptr);
+	for (;;) {
+		vTaskDelay(portMAX_DELAY);
+	}
+}
+
 bool postCompletion(
     const std::shared_ptr<SchedulerExecutorRuntime> &runtime,
     uint32_t jobId,
@@ -15,102 +19,118 @@ bool postCompletion(
 	if (!runtime) {
 		return false;
 	}
-	SchedulerEvent event{};
-	event.kind = SchedulerEventKind::JobFinished;
-	event.jobId = jobId;
-	event.generation = generation;
-	event.slotIndex = slotIndex;
-	while (runtime->accepting.load(std::memory_order_acquire)) {
-		QueueHandle_t queue = runtime->eventQueue.load(std::memory_order_acquire);
-		if (!queue) {
-			return false;
-		}
-		if (xQueueSend(queue, &event, pdMS_TO_TICKS(50)) == pdTRUE) {
-			return true;
-		}
-	}
-	return false;
+	return runtime->publish(SchedulerEvent{
+	    .kind = SchedulerEventKind::JobFinished,
+	    .jobId = jobId,
+	    .generation = generation,
+	    .slotIndex = slotIndex,
+	});
 }
 } // namespace
 
-struct DedicatedTaskExecutor::RuntimeState {
-	std::atomic<bool> accepting{false};
-	std::atomic<size_t> activeTasks{0};
+struct DedicatedTaskExecutor::TaskRecord {
+	JobInvocation invocation{};
+	Strata::FreeRTOS::Task task{};
+	std::atomic<bool> readyForDelete{false};
 };
 
-struct DedicatedTaskExecutor::TaskContext {
-	JobInvocation invocation{};
-	std::shared_ptr<RuntimeState> state{};
-	bool createdWithCaps = false;
-};
+DedicatedTaskExecutor::DedicatedTaskExecutor(
+    Strata::Placement allocationPlacement,
+    Strata::Placement defaultStackPlacement
+)
+    : allocationPlacement_(allocationPlacement), defaultStackPlacement_(defaultStackPlacement),
+      tasks_(allocationPlacement) {
+}
 
 DedicatedTaskExecutor::~DedicatedTaskExecutor() {
 	end(true);
 }
 
 bool DedicatedTaskExecutor::begin(const std::shared_ptr<SchedulerExecutorRuntime> &runtime) {
-	if (state_ && state_->accepting.load()) {
+	if (runtime_ && runtime_->accepting.load(std::memory_order_acquire)) {
 		return true;
 	}
-	RuntimeState *rawState = new (std::nothrow) RuntimeState{};
-	if (!rawState) {
+	if (!runtime) {
 		return false;
 	}
-	state_.reset(rawState);
-	state_->accepting.store(true);
 	runtime_ = runtime;
 	return true;
 }
 
+void DedicatedTaskExecutor::reapCompleted() {
+	for (size_t index = tasks_.size(); index > 0; --index) {
+		const size_t slot = index - 1;
+		if (!tasks_[slot] ||
+		    !tasks_[slot]->readyForDelete.load(std::memory_order_acquire)) {
+			continue;
+		}
+		if (tasks_[slot]->task) {
+			tasks_[slot]->task.reset();
+		}
+		tasks_.erase(slot);
+	}
+}
+
 void DedicatedTaskExecutor::end(bool drainRunningJobs) {
-	std::shared_ptr<RuntimeState> state = state_;
-	if (state) {
-		state->accepting.store(false);
-		if (drainRunningJobs) {
-			const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(3000);
-			while (state->activeTasks.load() > 0 && xTaskGetTickCount() < deadline) {
+	if (!runtime_ && tasks_.empty()) {
+		return;
+	}
+
+	if (drainRunningJobs) {
+		const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(3000);
+		while (!tasks_.empty() && xTaskGetTickCount() < deadline) {
+			reapCompleted();
+			if (!tasks_.empty()) {
 				vTaskDelay(pdMS_TO_TICKS(10));
 			}
 		}
 	}
+
+	for (size_t index = 0; index < tasks_.size(); ++index) {
+		if (tasks_[index] && tasks_[index]->task) {
+			tasks_[index]->task.reset();
+		}
+	}
+	tasks_.clear();
 	runtime_.reset();
-	state_.reset();
 }
 
 bool DedicatedTaskExecutor::submit(const JobInvocation &invocation) {
-	std::shared_ptr<RuntimeState> state = state_;
-	if (!state || !state->accepting.load()) {
+	if (!runtime_ || !runtime_->accepting.load(std::memory_order_acquire)) {
 		return false;
 	}
-	TaskContext *context = new (std::nothrow) TaskContext{};
-	if (!context) {
-		return false;
-	}
-	context->invocation = invocation;
-	context->invocation.runtime = runtime_;
-	context->state = state;
-	const DedicatedTaskOptions &task = invocation.dedicatedTask;
-	context->createdWithCaps = task.usePsramStack;
-	state->activeTasks.fetch_add(1);
 
-	TaskHandle_t handle = nullptr;
-	bool createdWithCaps = false;
-	const BaseType_t created = scheduler_task_support::createTaskPinned(
-	    &DedicatedTaskExecutor::taskEntry,
-	    task.name ? task.name : "sched-task",
-	    task.stackSize,
-	    context,
-	    task.priority,
-	    &handle,
-	    task.coreId,
-	    task.usePsramStack,
-	    createdWithCaps
-	);
-	if (created != pdPASS || handle == nullptr) {
-		state->activeTasks.fetch_sub(1);
-		delete context;
+	reapCompleted();
+	auto record = Strata::makeUnique<TaskRecord>(allocationPlacement_);
+	if (!record) {
 		return false;
 	}
+	record->invocation = invocation;
+	record->invocation.runtime = runtime_;
+	TaskRecord *rawRecord = record.get();
+	if (!tasks_.pushBack(std::move(record))) {
+		return false;
+	}
+
+	const DedicatedTaskOptions &task = rawRecord->invocation.dedicatedTask;
+	const Strata::Placement stackPlacement =
+	    task.stackPlacement.value_or(defaultStackPlacement_);
+	auto owner = Strata::FreeRTOS::Task::create(
+	    &DedicatedTaskExecutor::taskEntry,
+	    rawRecord,
+	    Strata::FreeRTOS::TaskConfig{
+	        .name = task.name ? task.name : "sched-task",
+	        .stackBytes = task.stackSize,
+	        .stackPlacement = stackPlacement,
+	        .priority = task.priority,
+	        .affinity = task.coreId,
+	    }
+	);
+	if (!owner) {
+		tasks_.popBack();
+		return false;
+	}
+	rawRecord->task = std::move(owner);
 	return true;
 }
 
@@ -119,24 +139,18 @@ const char *DedicatedTaskExecutor::name() const {
 }
 
 void DedicatedTaskExecutor::taskEntry(void *arg) {
-	TaskContext *context = static_cast<TaskContext *>(arg);
-	if (!context) {
-		vTaskDelete(nullptr);
-		return;
+	auto *record = static_cast<TaskRecord *>(arg);
+	if (!record) {
+		suspendForever();
 	}
 
-	context->invocation.callback.invoke();
+	record->invocation.callback.invoke();
 	postCompletion(
-	    context->invocation.runtime,
-	    context->invocation.jobId,
-	    context->invocation.generation,
-	    context->invocation.slotIndex
+	    record->invocation.runtime,
+	    record->invocation.jobId,
+	    record->invocation.generation,
+	    record->invocation.slotIndex
 	);
-	std::shared_ptr<RuntimeState> state = context->state;
-	const bool createdWithCaps = context->createdWithCaps;
-	delete context;
-	if (state) {
-		state->activeTasks.fetch_sub(1);
-	}
-	scheduler_task_support::deleteCurrentTask(createdWithCaps);
+	record->readyForDelete.store(true, std::memory_order_release);
+	suspendForever();
 }
