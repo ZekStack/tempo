@@ -30,6 +30,7 @@ enum class TempoStatus : uint8_t {
 	TimeNotValid,
 	LocationNotConfigured,
 	NtpUnavailable,
+	OutOfMemory,
 	InternalError,
 };
 
@@ -45,7 +46,7 @@ enum class TempoDiff : uint8_t {
 struct TempoResult {
 	bool result = false;
 	TempoStatus status = TempoStatus::InternalError;
-	std::string message;
+	const char *message = "error";
 
 	explicit operator bool() const {
 		return result;
@@ -95,7 +96,7 @@ struct DateTime {
 struct TempoSyncResult {
 	bool result = false;
 	TempoStatus status = TempoStatus::InternalError;
-	std::string message;
+	const char *message = "error";
 	DateTime syncedAtUtc{};
 
 	explicit operator bool() const {
@@ -128,7 +129,7 @@ struct TempoConfig {
 	const char *ntpServer =
 	    nullptr; // optional primary NTP server; used with timeZone to call configTzTime
 	uint32_t ntpSyncIntervalMs = 3600000;
-	bool usePSRAMBuffers = false;   // prefer PSRAM for Tempo-owned config/state text buffers
+	Strata::Placement bufferPlacement = Strata::Placement::PreferExternal;
 	const char *ntpServer2 = nullptr; // optional secondary NTP server
 	const char *ntpServer3 = nullptr; // optional tertiary NTP server
 	uint32_t sunCycleMatchWindowSeconds = 60;
@@ -458,7 +459,7 @@ class Tempo {
 	static constexpr size_t kMaxNtpServers = 3;
 	DateString ntpServers_[kMaxNtpServers];
 	uint32_t ntpSyncIntervalMs_ = 0;
-	bool usePSRAMBuffers_ = false;
+	Strata::Placement bufferPlacement_ = Strata::Placement::PreferExternal;
 	DateTime lastNtpSync_{};
 	bool hasLastNtpSync_ = false;
 	NtpSyncCallback ntpSyncCallback_ = nullptr;
