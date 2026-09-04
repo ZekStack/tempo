@@ -13,7 +13,7 @@ class DedicatedTaskExecutor : public ISchedulerExecutor {
 	DedicatedTaskExecutor(
 	    Strata::Placement allocationPlacement,
 	    Strata::Placement defaultStackPlacement
-	);
+	) noexcept;
 	~DedicatedTaskExecutor() override;
 
 	bool begin(const std::shared_ptr<SchedulerExecutorRuntime> &runtime) override;
