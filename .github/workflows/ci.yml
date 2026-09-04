@@ -36,7 +36,7 @@ jobs:
             exit 1
           fi
 
-          if grep -RInE 'ESPBufferManager|heap_caps_|MALLOC_CAP_|ps_malloc|xTaskCreate|vTaskDeleteWithCaps|xQueueCreate|xQueueCreateSet|xQueueSelectFromSet|xSemaphoreCreate|std::make_unique|std::make_shared|new[[:space:]]*\(std::nothrow\)|(^|[^[:alnum:]_])malloc[[:space:]]*\(|(^|[^[:alnum:]_])calloc[[:space:]]*\(|(^|[^[:alnum:]_])realloc[[:space:]]*\(|(^|[^[:alnum:]_])free[[:space:]]*\(' src; then
+          if grep -RInE 'ESPBufferManager|heap_caps_|MALLOC_CAP_|ps_malloc|xTaskCreate|vTaskDeleteWithCaps|xQueueCreate|xQueueCreateSet|xQueueSelectFromSet|xSemaphoreCreate|std::make_unique|std::make_shared|new[[:space:]]*\(std::nothrow\)|(^|[^:[:alnum:]_])malloc[[:space:]]*\(|(^|[^:[:alnum:]_])calloc[[:space:]]*\(|(^|[^:[:alnum:]_])realloc[[:space:]]*\(|(^|[^:[:alnum:]_])free[[:space:]]*\(' src; then
             echo "Tempo allocations and owned FreeRTOS primitives must route through Strata"
             exit 1
           fi
