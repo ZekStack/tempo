@@ -1,6 +1,6 @@
 #include "schedule_field.h"
 
-ScheduleField ScheduleField::any() {
+ScheduleField ScheduleField::any() noexcept {
 	ScheduleField field;
 	field.isAny_ = true;
 	return field;
