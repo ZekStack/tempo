@@ -14,7 +14,7 @@ void setup() {
 
 	TempoResult result = tempo.init(config);
 	if (!result) {
-		Serial.println(result.message.c_str());
+		Serial.println(result.message);
 		return;
 	}
 

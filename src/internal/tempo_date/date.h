@@ -30,64 +30,39 @@ enum class TempoStatus : uint8_t {
 	TimeNotValid,
 	LocationNotConfigured,
 	NtpUnavailable,
+	OutOfMemory,
 	InternalError,
 };
 
-enum class TempoDiff : uint8_t {
-	Seconds,
-	Minutes,
-	Hours,
-	Days,
-	Months,
-	Years,
-};
+enum class TempoDiff : uint8_t { Seconds, Minutes, Hours, Days, Months, Years };
 
 struct TempoResult {
 	bool result = false;
 	TempoStatus status = TempoStatus::InternalError;
-	std::string message;
-
-	explicit operator bool() const {
-		return result;
-	}
-
+	const char *message = "error";
+	explicit operator bool() const { return result; }
 	static TempoResult success(const char *message = "ok");
 	static TempoResult failure(TempoStatus status, const char *message);
 };
 
 struct TempoDuration {
 	int64_t secondsValue = 0;
-
-	static TempoDuration seconds(int64_t value) {
-		return TempoDuration{value};
-	}
-	static TempoDuration minutes(int64_t value) {
-		return TempoDuration{value * 60};
-	}
-	static TempoDuration hours(int64_t value) {
-		return TempoDuration{value * 3600};
-	}
-	int64_t seconds() const {
-		return secondsValue;
-	}
+	static TempoDuration seconds(int64_t value) { return TempoDuration{value}; }
+	static TempoDuration minutes(int64_t value) { return TempoDuration{value * 60}; }
+	static TempoDuration hours(int64_t value) { return TempoDuration{value * 3600}; }
+	int64_t seconds() const { return secondsValue; }
 };
 
 struct DateTime {
-	int64_t epochSeconds = 0; // seconds since 1970-01-01T00:00:00Z
-
+	int64_t epochSeconds = 0;
 	int yearUtc() const;
-	int monthUtc() const;  // 1..12
-	int dayUtc() const;    // 1..31
-	int hourUtc() const;   // 0..23
-	int minuteUtc() const; // 0..59
-	int secondUtc() const; // 0..59
-
-	// Uses current system TZ for local formatting.
-	bool
-	utcString(char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime) const;
-	bool localString(
-	    char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime
-	) const;
+	int monthUtc() const;
+	int dayUtc() const;
+	int hourUtc() const;
+	int minuteUtc() const;
+	int secondUtc() const;
+	bool utcString(char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime) const;
+	bool localString(char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime) const;
 	std::string utcString(TempoFormat style = TempoFormat::DateTime) const;
 	std::string localString(TempoFormat style = TempoFormat::DateTime) const;
 };
@@ -95,12 +70,9 @@ struct DateTime {
 struct TempoSyncResult {
 	bool result = false;
 	TempoStatus status = TempoStatus::InternalError;
-	std::string message;
+	const char *message = "error";
 	DateTime syncedAtUtc{};
-
-	explicit operator bool() const {
-		return result;
-	}
+	explicit operator bool() const { return result; }
 };
 
 struct LocalDateTime {
@@ -111,10 +83,9 @@ struct LocalDateTime {
 	int hour = 0;
 	int minute = 0;
 	int second = 0;
-	int offsetMinutes = 0; // local - UTC
+	int offsetMinutes = 0;
 	DateTime utc{};
 	bool hasResolvedUtc = false;
-
 	bool localString(char *outBuffer, size_t outSize) const;
 	std::string localString() const;
 };
@@ -123,29 +94,20 @@ struct TempoConfig {
 	float latitude = std::numeric_limits<float>::quiet_NaN();
 	float longitude = std::numeric_limits<float>::quiet_NaN();
 	const char *timezone = nullptr;
-	const char *timeZone = nullptr; // POSIX TZ string, e.g. "CET-1CEST,M3.5.0/2,M10.5.0/3"
+	const char *timeZone = nullptr;
 	std::vector<const char *> ntpServers{};
-	const char *ntpServer =
-	    nullptr; // optional primary NTP server; used with timeZone to call configTzTime
+	const char *ntpServer = nullptr;
 	uint32_t ntpSyncIntervalMs = 3600000;
-	bool usePSRAMBuffers = false;   // prefer PSRAM for Tempo-owned config/state text buffers
-	const char *ntpServer2 = nullptr; // optional secondary NTP server
-	const char *ntpServer3 = nullptr; // optional tertiary NTP server
+	Strata::Placement bufferPlacement = Strata::Placement::PreferExternal;
+	bool usePSRAMBuffers = true; // v0.1 compatibility bridge; PreferExternal by default in v0.2
+	const char *ntpServer2 = nullptr;
+	const char *ntpServer3 = nullptr;
 	uint32_t sunCycleMatchWindowSeconds = 60;
 	int64_t minValidUnixSeconds = 1577836800;
 };
 
-struct TempoSunEventResult {
-	bool ok;
-	DateTime value;
-};
-
-struct TempoMoonPhase {
-	bool ok;
-	int angleDegrees;    // 0..360
-	double illumination; // 0.0..1.0
-};
-
+struct TempoSunEventResult { bool ok; DateTime value; };
+struct TempoMoonPhase { bool ok; int angleDegrees; double illumination; };
 struct TempoSunCycle {
 	DateTime calculatedForDateUtc{};
 	LocalDateTime calculatedForLocalDate{};
@@ -163,91 +125,61 @@ class Tempo {
 	using NtpSyncCallback = void (*)(const DateTime &syncedAtUtc);
 	using NtpSyncCallable = std::function<void(const DateTime &syncedAtUtc)>;
 	using NtpSyncListenerId = uint32_t;
-
 	Tempo();
 	~Tempo();
 	TempoResult init(const TempoConfig &config = TempoConfig());
 	TempoResult updateLocation(float latitude, float longitude, const char *timeZone);
 	void deinit();
-	bool isInitialized() const {
-		return initialized_;
-	}
-	// Optional SNTP sync notification. Pass nullptr to clear.
+	bool isInitialized() const { return initialized_; }
 	void setNtpSyncCallback(NtpSyncCallback callback);
-	// Accepts capturing lambdas / std::bind / functors.
-	// Non-capturing lambdas bind to the function-pointer overload above.
-	template <
-	    typename Callable,
-	    typename std::enable_if<
-	        !std::is_convertible<typename std::decay<Callable>::type, NtpSyncCallback>::value,
-	        int>::type = 0>
-	void setNtpSyncCallback(Callable &&callback) {
-		setNtpSyncCallbackCallable(NtpSyncCallable(std::forward<Callable>(callback)));
-	}
-	// Adjusts SNTP sync interval in milliseconds. Pass 0 to keep the runtime default.
-	// Returns false when the runtime does not expose interval control.
+	template <typename Callable, typename std::enable_if<!std::is_convertible<typename std::decay<Callable>::type, NtpSyncCallback>::value, int>::type = 0>
+	void setNtpSyncCallback(Callable &&callback) { setNtpSyncCallbackCallable(NtpSyncCallable(std::forward<Callable>(callback))); }
 	bool setNtpSyncIntervalMs(uint32_t intervalMs);
-	// True after at least one successful SNTP sync callback was received.
 	bool hasLastNtpSync() const;
-	// Returns the last SNTP sync timestamp (UTC epoch-backed DateTime).
-	// When hasLastNtpSync() is false this returns DateTime{}.
 	DateTime lastNtpSync() const;
 	NtpSyncListenerId addNtpSyncListener(const NtpSyncCallable &listener);
 	bool removeNtpSyncListener(NtpSyncListenerId id);
-	// Triggers an immediate NTP sync with the configured server list.
-	// Returns false when no NTP server is configured or SNTP runtime support is unavailable.
 	bool syncNTP();
 	TempoResult syncNtp();
-
 	void setMinValidUnixSeconds(int64_t value);
 	int64_t minValidUnixSeconds() const;
 	bool isValidTime() const;
 	uint64_t unixSeconds() const;
 	uint64_t unixSeconds(const DateTime &dt) const;
-
 	DateTime now() const;
-	DateTime nowUtc() const; // alias of now(), returns the raw system clock (UTC)
+	DateTime nowUtc() const;
 	LocalDateTime nowLocal() const;
 	LocalDateTime toLocal(const DateTime &dt) const;
 	LocalDateTime toLocal(const DateTime &dt, const char *timeZone) const;
 	DateTime fromUnixSeconds(int64_t seconds) const;
-	DateTime
-	fromUtc(int year, int month, int day, int hour = 0, int minute = 0, int second = 0) const;
-	DateTime
-	fromLocal(int year, int month, int day, int hour = 0, int minute = 0, int second = 0) const;
+	DateTime fromUtc(int year, int month, int day, int hour = 0, int minute = 0, int second = 0) const;
+	DateTime fromLocal(int year, int month, int day, int hour = 0, int minute = 0, int second = 0) const;
 	DateTime toUtc(const LocalDateTime &dt) const;
 	int64_t toUnixSeconds(const DateTime &dt) const;
-
-	// Arithmetic relative to a provided DateTime
 	DateTime addSeconds(const DateTime &dt, int64_t seconds) const;
 	DateTime addMinutes(const DateTime &dt, int64_t minutes) const;
 	DateTime addHours(const DateTime &dt, int64_t hours) const;
 	DateTime addDays(const DateTime &dt, int32_t days) const;
 	DateTime addMonths(const DateTime &dt, int32_t months) const;
 	DateTime addYears(const DateTime &dt, int32_t years) const;
-
 	DateTime subSeconds(const DateTime &dt, int64_t seconds) const;
 	DateTime subMinutes(const DateTime &dt, int64_t minutes) const;
 	DateTime subHours(const DateTime &dt, int64_t hours) const;
 	DateTime subDays(const DateTime &dt, int32_t days) const;
 	DateTime subMonths(const DateTime &dt, int32_t months) const;
 	DateTime subYears(const DateTime &dt, int32_t years) const;
-
-	// Convenience arithmetic relative to now()
 	DateTime addSeconds(int64_t seconds) const;
 	DateTime addMinutes(int64_t minutes) const;
 	DateTime addHours(int64_t hours) const;
 	DateTime addDays(int32_t days) const;
 	DateTime addMonths(int32_t months) const;
 	DateTime addYears(int32_t years) const;
-
 	DateTime subSeconds(int64_t seconds) const;
 	DateTime subMinutes(int64_t minutes) const;
 	DateTime subHours(int64_t hours) const;
 	DateTime subDays(int32_t days) const;
 	DateTime subMonths(int32_t months) const;
 	DateTime subYears(int32_t years) const;
-
 	DateTime addSecondsUtc(const DateTime &dt, int64_t seconds) const;
 	DateTime addMinutesUtc(const DateTime &dt, int64_t minutes) const;
 	DateTime addHoursUtc(const DateTime &dt, int64_t hours) const;
@@ -260,143 +192,77 @@ class Tempo {
 	DateTime subDaysUtc(const DateTime &dt, int32_t days) const;
 	DateTime subMonthsUtc(const DateTime &dt, int32_t months) const;
 	DateTime subYearsUtc(const DateTime &dt, int32_t years) const;
-
-	// Differences
 	int64_t differenceInSeconds(const DateTime &a, const DateTime &b) const;
 	int64_t differenceInMinutes(const DateTime &a, const DateTime &b) const;
 	int64_t differenceInHours(const DateTime &a, const DateTime &b) const;
 	int64_t differenceInDays(const DateTime &a, const DateTime &b) const;
 	int64_t diff(const DateTime &a, const DateTime &b, TempoDiff unit = TempoDiff::Seconds) const;
-
-	// Comparisons
 	bool isBefore(const DateTime &a, const DateTime &b) const;
 	bool isAfter(const DateTime &a, const DateTime &b) const;
-	bool isEqual(const DateTime &a, const DateTime &b) const; // seconds precision
-	bool isEqualMinutes(
-	    const DateTime &a, const DateTime &b
-	) const; // minutes precision (UTC epoch / 60)
-	bool isEqualMinutesUtc(
-	    const DateTime &a, const DateTime &b
-	) const; // alias for minute-level UTC compare
+	bool isEqual(const DateTime &a, const DateTime &b) const;
+	bool isEqualMinutes(const DateTime &a, const DateTime &b) const;
+	bool isEqualMinutesUtc(const DateTime &a, const DateTime &b) const;
 	bool isSameDay(const DateTime &a, const DateTime &b) const;
 	bool isSameLocalDay(const DateTime &a, const DateTime &b) const;
-
-	// Calendar helpers (UTC)
 	DateTime startOfDayUtc(const DateTime &dt) const;
 	DateTime endOfDayUtc(const DateTime &dt) const;
 	DateTime startOfMonthUtc(const DateTime &dt) const;
 	DateTime endOfMonthUtc(const DateTime &dt) const;
-
 	int getYearUtc(const DateTime &dt) const;
-	int getMonthUtc(const DateTime &dt) const;   // 1..12
-	int getDayUtc(const DateTime &dt) const;     // 1..31
-	int getWeekdayUtc(const DateTime &dt) const; // 0=Sunday..6=Saturday
-
-	// Local time helpers (respect TZ)
+	int getMonthUtc(const DateTime &dt) const;
+	int getDayUtc(const DateTime &dt) const;
+	int getWeekdayUtc(const DateTime &dt) const;
 	DateTime startOfDayLocal(const DateTime &dt) const;
 	DateTime endOfDayLocal(const DateTime &dt) const;
 	DateTime startOfMonthLocal(const DateTime &dt) const;
 	DateTime endOfMonthLocal(const DateTime &dt) const;
 	DateTime startOfYearUtc(const DateTime &dt) const;
 	DateTime startOfYearLocal(const DateTime &dt) const;
-
 	DateTime setTimeOfDayLocal(const DateTime &dt, int hour, int minute, int second) const;
 	DateTime setTimeOfDayUtc(const DateTime &dt, int hour, int minute, int second) const;
 	DateTime nextDailyAtLocal(int hour, int minute, int second, const DateTime &from) const;
-	DateTime
-	nextWeekdayAtLocal(int weekday, int hour, int minute, int second, const DateTime &from) const;
-
+	DateTime nextWeekdayAtLocal(int weekday, int hour, int minute, int second, const DateTime &from) const;
 	int getYearLocal(const DateTime &dt) const;
-	int getMonthLocal(const DateTime &dt) const;   // 1..12
-	int getDayLocal(const DateTime &dt) const;     // 1..31
-	int getWeekdayLocal(const DateTime &dt) const; // 0=Sunday..6=Saturday
-
+	int getMonthLocal(const DateTime &dt) const;
+	int getDayLocal(const DateTime &dt) const;
+	int getWeekdayLocal(const DateTime &dt) const;
 	bool isLeapYear(int year) const;
-	int daysInMonth(int year, int month) const; // month: 1..12
-
-	// Formatting
+	int daysInMonth(int year, int month) const;
 	bool formatUtc(const DateTime &dt, TempoFormat style, char *outBuffer, size_t outSize) const;
-	bool
-	formatLocal(const DateTime &dt, TempoFormat style, char *outBuffer, size_t outSize) const;
-	bool formatWithPatternUtc(
-	    const DateTime &dt, const char *pattern, char *outBuffer, size_t outSize
-	) const;
-	bool formatWithPatternLocal(
-	    const DateTime &dt, const char *pattern, char *outBuffer, size_t outSize
-	) const;
-
-	// String helpers (embedded-safe buffer first, then std::string convenience)
-	bool dateTimeToStringUtc(
-	    const DateTime &dt,
-	    char *outBuffer,
-	    size_t outSize,
-	    TempoFormat style = TempoFormat::DateTime
-	) const;
-	bool dateTimeToStringLocal(
-	    const DateTime &dt,
-	    char *outBuffer,
-	    size_t outSize,
-	    TempoFormat style = TempoFormat::DateTime
-	) const;
+	bool formatLocal(const DateTime &dt, TempoFormat style, char *outBuffer, size_t outSize) const;
+	bool formatWithPatternUtc(const DateTime &dt, const char *pattern, char *outBuffer, size_t outSize) const;
+	bool formatWithPatternLocal(const DateTime &dt, const char *pattern, char *outBuffer, size_t outSize) const;
+	bool dateTimeToStringUtc(const DateTime &dt, char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime) const;
+	bool dateTimeToStringLocal(const DateTime &dt, char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime) const;
 	bool localDateTimeToString(const LocalDateTime &dt, char *outBuffer, size_t outSize) const;
-	bool nowUtcString(
-	    char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime
-	) const;
-	bool nowLocalString(
-	    char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime
-	) const;
-	bool lastNtpSyncStringUtc(
-	    char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime
-	) const;
-	bool lastNtpSyncStringLocal(
-	    char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime
-	) const;
-
-	std::string
-	dateTimeToStringUtc(const DateTime &dt, TempoFormat style = TempoFormat::DateTime) const;
-	std::string
-	dateTimeToStringLocal(const DateTime &dt, TempoFormat style = TempoFormat::DateTime) const;
+	bool nowUtcString(char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime) const;
+	bool nowLocalString(char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime) const;
+	bool lastNtpSyncStringUtc(char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime) const;
+	bool lastNtpSyncStringLocal(char *outBuffer, size_t outSize, TempoFormat style = TempoFormat::DateTime) const;
+	std::string dateTimeToStringUtc(const DateTime &dt, TempoFormat style = TempoFormat::DateTime) const;
+	std::string dateTimeToStringLocal(const DateTime &dt, TempoFormat style = TempoFormat::DateTime) const;
 	std::string localDateTimeToString(const LocalDateTime &dt) const;
 	std::string nowUtcString(TempoFormat style = TempoFormat::DateTime) const;
 	std::string nowLocalString(TempoFormat style = TempoFormat::DateTime) const;
 	std::string lastNtpSyncStringUtc(TempoFormat style = TempoFormat::DateTime) const;
 	std::string lastNtpSyncStringLocal(TempoFormat style = TempoFormat::DateTime) const;
-
-	struct ParseResult {
-		bool ok;
-		DateTime value;
-	};
-
+	struct ParseResult { bool ok; DateTime value; };
 	ParseResult parseIso8601Utc(const char *str) const;
 	ParseResult parseDateTimeLocal(const char *str) const;
 	DateTime parseUtc(const char *str) const;
 	LocalDateTime parseLocal(const char *str) const;
-
-	// Sun cycle using stored configuration (lat/lon/timezone)
 	TempoSunEventResult sunrise() const;
 	TempoSunEventResult sunset() const;
 	TempoSunEventResult sunrise(const DateTime &day) const;
 	TempoSunEventResult sunset(const DateTime &day) const;
-
-	// Sun cycle with explicit parameters (timezone in hours, DST flag)
 	TempoSunEventResult sunrise(float latitude, float longitude, float timezoneHours, bool isDst) const;
 	TempoSunEventResult sunset(float latitude, float longitude, float timezoneHours, bool isDst) const;
-	TempoSunEventResult sunrise(
-	    float latitude, float longitude, float timezoneHours, bool isDst, const DateTime &day
-	) const;
-	TempoSunEventResult sunset(
-	    float latitude, float longitude, float timezoneHours, bool isDst, const DateTime &day
-	) const;
-
-	// Sun cycle using a POSIX TZ string (auto-DST) instead of numeric offset
+	TempoSunEventResult sunrise(float latitude, float longitude, float timezoneHours, bool isDst, const DateTime &day) const;
+	TempoSunEventResult sunset(float latitude, float longitude, float timezoneHours, bool isDst, const DateTime &day) const;
 	TempoSunEventResult sunrise(float latitude, float longitude, const char *timeZone) const;
 	TempoSunEventResult sunset(float latitude, float longitude, const char *timeZone) const;
-	TempoSunEventResult
-	sunrise(float latitude, float longitude, const char *timeZone, const DateTime &day) const;
-	TempoSunEventResult
-	sunset(float latitude, float longitude, const char *timeZone, const DateTime &day) const;
-
-	// Daylight checks using stored configuration
+	TempoSunEventResult sunrise(float latitude, float longitude, const char *timeZone, const DateTime &day) const;
+	TempoSunEventResult sunset(float latitude, float longitude, const char *timeZone, const DateTime &day) const;
 	bool isDay() const;
 	bool isDay(const DateTime &day) const;
 	bool isDay(const TempoDuration &sunRiseOffset, const TempoDuration &sunSetOffset) const;
@@ -416,20 +282,13 @@ class Tempo {
 	bool isSunSet(const DateTime &dt);
 	bool isSunSet(const TempoDuration &offset);
 	bool isSunSet(const DateTime &dt, const TempoDuration &offset);
-
-	// Daylight saving time helpers
 	bool isDstActive() const;
 	bool isDstActive(const DateTime &dt) const;
 	bool isDstActive(const char *timeZone) const;
 	bool isDstActive(const DateTime &dt, const char *timeZone) const;
-
-	// Moon phase
 	TempoMoonPhase moonPhase() const;
 	TempoMoonPhase moonPhase(const DateTime &dt) const;
-
-	// Month names
-	const char *
-	monthName(int month) const; // 1..12, returns "January" ..."December" or nullptr on invalid
+	const char *monthName(int month) const;
 	const char *monthName(const DateTime &dt) const;
 
   private:
@@ -443,7 +302,6 @@ class Tempo {
 	void applyConfig(const TempoConfig &config);
 	bool applyNtpConfig() const;
 	bool hasAnyNtpServerConfigured() const;
-
 	TempoSunEventResult sunriseFromConfig(const DateTime &day) const;
 	TempoSunEventResult sunsetFromConfig(const DateTime &day) const;
 	bool isDayWithOffsets(const DateTime &day, int sunRiseOffsetSec, int sunSetOffsetSec) const;
@@ -451,22 +309,19 @@ class Tempo {
 	bool refreshSunCycleCache(const DateTime &day);
 	DateTime addCalendarDaysLocal(const DateTime &dt, int days) const;
 	bool inSunWindow(const DateTime &dt, const DateTime &event, const TempoDuration &offset) const;
-
 	float latitude_ = 0.0f;
 	float longitude_ = 0.0f;
 	DateString timeZone_;
 	static constexpr size_t kMaxNtpServers = 3;
 	DateString ntpServers_[kMaxNtpServers];
 	uint32_t ntpSyncIntervalMs_ = 0;
-	bool usePSRAMBuffers_ = false;
+	Strata::Placement bufferPlacement_ = Strata::Placement::PreferExternal;
+	bool usePSRAMBuffers_ = true;
 	DateTime lastNtpSync_{};
 	bool hasLastNtpSync_ = false;
 	NtpSyncCallback ntpSyncCallback_ = nullptr;
 	NtpSyncCallable ntpSyncCallbackCallable_;
-	struct NtpSyncListenerSlot {
-		NtpSyncListenerId id = 0;
-		NtpSyncCallable listener{};
-	};
+	struct NtpSyncListenerSlot { NtpSyncListenerId id = 0; NtpSyncCallable listener{}; };
 	static constexpr size_t kMaxNtpSyncListeners = 4;
 	NtpSyncListenerSlot ntpSyncListeners_[kMaxNtpSyncListeners]{};
 	NtpSyncListenerId nextNtpSyncListenerId_ = 1;
@@ -482,7 +337,5 @@ class Tempo {
 	TempoSunCycle sunCycleCache_{};
 
   public:
-	void _testDispatchNtpSync(const DateTime &syncedAtUtc) {
-		dispatchNtpSync(syncedAtUtc);
-	}
+	void _testDispatchNtpSync(const DateTime &syncedAtUtc) { dispatchNtpSync(syncedAtUtc); }
 };

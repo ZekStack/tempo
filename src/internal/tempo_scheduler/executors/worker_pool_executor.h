@@ -2,12 +2,19 @@
 
 #include <atomic>
 
+#include <strata/freertos/Queue.h>
+#include <strata/freertos/Task.h>
+
 #include "../core/runtime_containers.h"
 #include "scheduler_executor.h"
 
 class WorkerPoolExecutor : public ISchedulerExecutor {
   public:
-	explicit WorkerPoolExecutor(const WorkerPoolConfig &config);
+	WorkerPoolExecutor(
+	    const WorkerPoolConfig &config,
+	    Strata::Placement allocationPlacement,
+	    Strata::Placement defaultStackPlacement
+	) noexcept;
 	~WorkerPoolExecutor() override;
 
 	bool begin(const std::shared_ptr<SchedulerExecutorRuntime> &runtime) override;
@@ -17,18 +24,16 @@ class WorkerPoolExecutor : public ISchedulerExecutor {
 
   private:
 	struct TaskItem;
-	struct WorkerContext;
-	struct WorkerHandle {
-		TaskHandle_t task = nullptr;
-		bool createdWithCaps = false;
-	};
+	struct WorkerRecord;
 
 	static void workerTaskEntry(void *arg);
+	void destroyPendingItems();
 
 	WorkerPoolConfig config_{};
+	Strata::Placement allocationPlacement_ = Strata::Placement::PreferExternal;
+	Strata::Placement defaultStackPlacement_ = Strata::Placement::PreferExternal;
 	std::shared_ptr<SchedulerExecutorRuntime> runtime_{};
-	QueueHandle_t queue_ = nullptr;
-	SchedulerArray<WorkerHandle> workers_{};
+	Strata::FreeRTOS::Queue<TaskItem *> queue_{};
+	SchedulerArray<Strata::UniquePtr<WorkerRecord>> workers_{};
 	std::atomic<bool> started_{false};
-	std::atomic<int> workersRunning_{0};
 };

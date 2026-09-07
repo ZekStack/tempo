@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 enum class SchedulerError : uint8_t {
 	Ok = 0,
@@ -34,7 +35,7 @@ template <typename T> struct SchedulerResult {
 		return {SchedulerError::Ok, value};
 	}
 
-	static SchedulerResult<T> failure(SchedulerError error) {
+	static SchedulerResult<T> failure(SchedulerError error) noexcept(std::is_nothrow_default_constructible_v<T>) {
 		return {error, T{}};
 	}
 };
@@ -54,7 +55,7 @@ template <> struct SchedulerResult<void> {
 		return {SchedulerError::Ok};
 	}
 
-	static SchedulerResult<void> failure(SchedulerError error) {
+	static SchedulerResult<void> failure(SchedulerError error) noexcept {
 		return {error};
 	}
 };

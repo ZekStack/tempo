@@ -1,7 +1,8 @@
 #include "scheduler.h"
 
-#include <new>
 #include <utility>
+
+#include <strata/freertos/Queue.h>
 
 #include "core/runtime_containers.h"
 #include "core/scheduler_core.h"
@@ -11,22 +12,33 @@
 #include "service/scheduler_commands.h"
 #include "service/scheduler_service.h"
 
-extern "C" {
-#include "freertos/queue.h"
+namespace {
+constexpr size_t kMinTaskStackBytes = 1024;
+
+bool validStackSize(size_t stackBytes) {
+	return stackBytes >= kMinTaskStackBytes && (stackBytes % sizeof(StackType_t)) == 0;
 }
 
-namespace {
+bool validOptionalPlacement(const std::optional<Strata::Placement> &placement) {
+	return !placement || Strata::validPlacement(*placement);
+}
+
 bool validSchedulerConfig(const SchedulerConfig &config) {
-	return config.service.commandQueueDepth > 0 && config.service.eventQueueDepth > 0 &&
-	       config.service.taskStackSize > 0 && config.service.controlTimeoutMs > 0 &&
-	       config.defaultWorkerPool.workerCount > 0 &&
-	       config.defaultWorkerPool.queueDepth > 0 && config.defaultWorkerPool.stackSize > 0 &&
-	       config.defaultDedicatedTask.stackSize > 0;
+	return Strata::validMemoryPolicy(config.memory) &&
+	       validOptionalPlacement(config.service.stackPlacement) &&
+	       validOptionalPlacement(config.defaultWorkerPool.stackPlacement) &&
+	       validOptionalPlacement(config.defaultDedicatedTask.stackPlacement) &&
+	       config.service.commandQueueDepth > 0 && config.service.eventQueueDepth > 0 &&
+	       validStackSize(config.service.taskStackSize) && config.service.controlTimeoutMs > 0 &&
+	       config.defaultWorkerPool.workerCount > 0 && config.defaultWorkerPool.queueDepth > 0 &&
+	       validStackSize(config.defaultWorkerPool.stackSize) &&
+	       validStackSize(config.defaultDedicatedTask.stackSize);
 }
 
 template <typename TCommand, typename TResult, typename FBuild>
 TResult executeBackgroundCommand(
     SchedulerService &service,
+    Strata::Placement allocationPlacement,
     uint32_t timeoutMs,
     SchedulerError queueError,
     SchedulerError timeoutError,
@@ -35,7 +47,7 @@ TResult executeBackgroundCommand(
 	if (service.isCurrentTask()) {
 		return TResult::failure(SchedulerError::Busy);
 	}
-	TCommand *command = new (std::nothrow) TCommand();
+	TCommand *command = SchedulerServiceCommand::create<TCommand>(allocationPlacement);
 	if (!command) {
 		return TResult::failure(SchedulerError::NoMemory);
 	}
@@ -63,17 +75,14 @@ TResult executeBackgroundCommand(
 } // namespace
 
 struct TempoScheduler::Impl : public IExecutorResolver {
-	explicit Impl(Tempo &date, const SchedulerConfig &config)
+	explicit Impl(Tempo &date, const SchedulerConfig &config) noexcept
 	    : date(date), config(config),
-	      manualCore(date, config.minValidEpochSeconds, config.usePSRAMMetadata),
-	      externalExecutors(config.usePSRAMMetadata), executors(config.usePSRAMMetadata) {
+	      manualCore(date, config.minValidEpochSeconds, config.memory.allocation),
+	      externalExecutors(config.memory.allocation), executors(config.memory.allocation) {
 	}
 
-	~Impl() {
-		if (eventQueue) {
-			vQueueDelete(eventQueue);
-			eventQueue = nullptr;
-		}
+	~Impl() override {
+		eventQueue.reset();
 	}
 
 	ISchedulerExecutor *inlineExecutor() override {
@@ -87,14 +96,38 @@ struct TempoScheduler::Impl : public IExecutorResolver {
 		return executors[executorId];
 	}
 
-	bool startExecutors() {
-		inlineDispatch.reset(new (std::nothrow) InlineExecutor());
-		dedicatedTask.reset(new (std::nothrow) DedicatedTaskExecutor());
-		if (!inlineDispatch || !dedicatedTask) {
-			return false;
+	void reapCompletedExecutors() override {
+		for (size_t index = 0; index < executors.size(); ++index) {
+			if (executors[index]) {
+				executors[index]->reapCompleted();
+			}
 		}
-		workerPool.reset(new (std::nothrow) WorkerPoolExecutor(config.defaultWorkerPool));
-		if (!workerPool) {
+	}
+
+	static bool postServiceEvent(void *context, const SchedulerEvent &event) {
+		auto *schedulerService = static_cast<SchedulerService *>(context);
+		return schedulerService != nullptr && schedulerService->postEvent(event);
+	}
+
+	static bool postManualEvent(void *context, const SchedulerEvent &event) {
+		auto *self = static_cast<Impl *>(context);
+		return self != nullptr && self->eventQueue && self->eventQueue.send(event, 0);
+	}
+
+	bool startExecutors() {
+		inlineDispatch = Strata::makeUnique<InlineExecutor>(config.memory.allocation);
+		dedicatedTask = Strata::makeUnique<DedicatedTaskExecutor>(
+		    config.memory.allocation,
+		    config.memory.allocation,
+		    config.memory.taskStack
+		);
+		workerPool = Strata::makeUnique<WorkerPoolExecutor>(
+		    config.memory.allocation,
+		    config.defaultWorkerPool,
+		    config.memory.allocation,
+		    config.memory.taskStack
+		);
+		if (!inlineDispatch || !dedicatedTask || !workerPool) {
 			return false;
 		}
 		if (!inlineDispatch->begin(runtime)) {
@@ -143,9 +176,9 @@ struct TempoScheduler::Impl : public IExecutorResolver {
 		if (!eventQueue) {
 			return;
 		}
-		while (true) {
+		for (;;) {
 			SchedulerEvent event{};
-			if (xQueueReceive(eventQueue, &event, 0) != pdTRUE) {
+			if (!eventQueue.receive(event, 0)) {
 				break;
 			}
 			manualCore.handleEvent(event, nowUtc, *this);
@@ -193,17 +226,26 @@ struct TempoScheduler::Impl : public IExecutorResolver {
 		resetTimeContextTracking();
 	}
 
+	void clearRuntimePublisher() {
+		if (!runtime) {
+			return;
+		}
+		runtime->accepting.store(false, std::memory_order_release);
+		runtime->postEvent.store(nullptr, std::memory_order_release);
+		runtime->postEventContext.store(nullptr, std::memory_order_release);
+	}
+
 	Tempo &date;
 	SchedulerConfig config{};
 	SchedulerCore manualCore;
-	std::unique_ptr<SchedulerService> service{};
-	std::unique_ptr<InlineExecutor> inlineDispatch{};
-	std::unique_ptr<WorkerPoolExecutor> workerPool{};
-	std::unique_ptr<DedicatedTaskExecutor> dedicatedTask{};
+	Strata::UniquePtr<SchedulerService> service{};
+	Strata::UniquePtr<InlineExecutor> inlineDispatch{};
+	Strata::UniquePtr<WorkerPoolExecutor> workerPool{};
+	Strata::UniquePtr<DedicatedTaskExecutor> dedicatedTask{};
 	SchedulerArray<ISchedulerExecutor *> externalExecutors{};
 	SchedulerArray<ISchedulerExecutor *> executors{};
 	std::shared_ptr<SchedulerExecutorRuntime> runtime{};
-	QueueHandle_t eventQueue = nullptr;
+	Strata::FreeRTOS::Queue<SchedulerEvent> eventQueue{};
 	std::atomic<bool> timeContextRefreshRequested{false};
 	DateTime lastObservedLocalDayStartUtc{};
 	bool hasLastObservedLocalDayStartUtc = false;
@@ -215,7 +257,7 @@ struct TempoScheduler::Impl : public IExecutorResolver {
 TempoScheduler::TempoScheduler() = default;
 
 TempoScheduler::TempoScheduler(Tempo &date, const SchedulerConfig &config)
-    : impl_(new (std::nothrow) Impl(date, config)) {
+    : impl_(Strata::makeUnique<Impl>(config.memory.allocation, date, config)) {
 }
 
 TempoScheduler::~TempoScheduler() {
@@ -229,7 +271,7 @@ SchedulerResult<void> TempoScheduler::init(Tempo &date, const SchedulerConfig &c
 	if (impl_ && impl_->started) {
 		return SchedulerResult<void>::failure(SchedulerError::AlreadyInitialized);
 	}
-	impl_.reset(new (std::nothrow) Impl(date, config));
+	impl_ = Strata::makeUnique<Impl>(config.memory.allocation, date, config);
 	if (!impl_) {
 		return SchedulerResult<void>::failure(SchedulerError::NoMemory);
 	}
@@ -245,36 +287,43 @@ bool TempoScheduler::init() {
 		return true;
 	}
 
-	impl_->runtime = std::make_shared<SchedulerExecutorRuntime>();
+	impl_->runtime = Strata::makeShared<SchedulerExecutorRuntime>(impl_->config.memory.allocation);
 	if (!impl_->runtime) {
 		return false;
 	}
 
 	if (impl_->config.mode == TempoSchedulerMode::Background) {
-		impl_->service.reset(new (std::nothrow) SchedulerService(
+		impl_->service = Strata::makeUnique<SchedulerService>(
+		    impl_->config.memory.allocation,
 		    impl_->date,
 		    impl_->config.service,
+		    impl_->config.memory,
 		    impl_->config.minValidEpochSeconds,
-		    impl_->config.usePSRAMMetadata,
 		    impl_->timeContextRefreshRequested,
 		    *impl_
-		));
+		);
 		if (!impl_->service || !impl_->service->begin()) {
 			impl_->service.reset();
 			impl_->runtime.reset();
 			return false;
 		}
-		impl_->runtime->eventQueue.store(impl_->service->eventQueue());
+		impl_->runtime->postEventContext.store(impl_->service.get(), std::memory_order_release);
+		impl_->runtime->postEvent.store(&Impl::postServiceEvent, std::memory_order_release);
 	} else {
-		impl_->eventQueue =
-		    xQueueCreate(impl_->config.service.eventQueueDepth, sizeof(SchedulerEvent));
+		impl_->eventQueue = Strata::FreeRTOS::Queue<SchedulerEvent>::create({
+		    .length = impl_->config.service.eventQueueDepth,
+		    .storagePlacement = impl_->config.memory.allocation,
+		    .usage = Strata::FreeRTOS::QueueUsage::TaskOnly,
+		});
 		if (!impl_->eventQueue) {
 			impl_->runtime.reset();
 			return false;
 		}
-		impl_->runtime->eventQueue.store(impl_->eventQueue);
+		impl_->runtime->postEventContext.store(impl_.get(), std::memory_order_release);
+		impl_->runtime->postEvent.store(&Impl::postManualEvent, std::memory_order_release);
 	}
 
+	impl_->runtime->accepting.store(true, std::memory_order_release);
 	impl_->started = true;
 	if (!impl_->startExecutors()) {
 		end(false);
@@ -302,8 +351,9 @@ void TempoScheduler::end(bool waitForRunningJobs, uint32_t timeoutMs) {
 	impl_->unregisterTimeSyncListener();
 
 	if (impl_->config.mode == TempoSchedulerMode::Background && impl_->service) {
-		executeBackgroundCommand<CancelAllCommand, SchedulerResult<void>>(
+		(void)executeBackgroundCommand<CancelAllCommand, SchedulerResult<void>>(
 		    *impl_->service,
+		    impl_->config.memory.allocation,
 		    impl_->config.service.controlTimeoutMs,
 		    SchedulerError::QueueFull,
 		    SchedulerError::Timeout,
@@ -315,46 +365,32 @@ void TempoScheduler::end(bool waitForRunningJobs, uint32_t timeoutMs) {
 			while (impl_->service->activeInvocationCount() > 0 && xTaskGetTickCount() < deadline) {
 				vTaskDelay(pdMS_TO_TICKS(10));
 			}
+		} else if (impl_->runtime) {
+			impl_->runtime->accepting.store(false, std::memory_order_release);
 		}
 
-		if (impl_->runtime) {
-			impl_->runtime->accepting.store(waitForRunningJobs);
-			if (!waitForRunningJobs) {
-				impl_->runtime->eventQueue.store(nullptr);
-				impl_->runtime->accepting.store(false);
-			}
-		}
 		impl_->stopExecutors(waitForRunningJobs);
-		if (impl_->runtime) {
-			impl_->runtime->eventQueue.store(nullptr);
-			impl_->runtime->accepting.store(false);
-		}
+		impl_->clearRuntimePublisher();
 		impl_->service->stop();
 		impl_->service.reset();
 	} else {
-		impl_->manualCore.cancelAll();
+		(void)impl_->manualCore.cancelAll();
 		const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeoutMs);
 		while (waitForRunningJobs && impl_->manualCore.activeInvocationCount() > 0 &&
 		       xTaskGetTickCount() < deadline) {
 			impl_->drainManualEvents(impl_->date.now());
+			impl_->reapCompletedExecutors();
 			vTaskDelay(pdMS_TO_TICKS(10));
 		}
-		if (impl_->runtime) {
-			impl_->runtime->eventQueue.store(nullptr);
-			impl_->runtime->accepting.store(false);
+		if (!waitForRunningJobs && impl_->runtime) {
+			impl_->runtime->accepting.store(false, std::memory_order_release);
 		}
 		impl_->stopExecutors(waitForRunningJobs);
-		if (impl_->eventQueue) {
-			vQueueDelete(impl_->eventQueue);
-			impl_->eventQueue = nullptr;
-		}
+		impl_->clearRuntimePublisher();
+		impl_->eventQueue.reset();
 	}
 
-	if (impl_->runtime) {
-		impl_->runtime->eventQueue.store(nullptr);
-		impl_->runtime->accepting.store(false);
-		impl_->runtime.reset();
-	}
+	impl_->runtime.reset();
 	impl_->started = false;
 	impl_->draining = false;
 }
@@ -403,13 +439,16 @@ SchedulerResult<uint32_t> TempoScheduler::addJob(
     SchedulerFunction callback,
     void *userData
 ) {
-	if (!callback) {
+	if (!callback || !impl_) {
 		return SchedulerResult<uint32_t>::failure(SchedulerError::InvalidSchedule);
 	}
 	CallbackRef ref{};
 	ref.kind = CallbackKind::OwningFunction;
 	ref.userData = userData;
-	ref.owningFn = std::make_shared<SchedulerFunction>(std::move(callback));
+	ref.owningFn = Strata::makeShared<SchedulerFunction>(
+	    impl_->config.memory.allocation,
+	    std::move(callback)
+	);
 	if (!ref.owningFn) {
 		return SchedulerResult<uint32_t>::failure(SchedulerError::NoMemory);
 	}
@@ -419,13 +458,16 @@ SchedulerResult<uint32_t> TempoScheduler::addJob(
 SchedulerResult<uint32_t> TempoScheduler::addJob(
     const TempoSchedule &schedule, const SchedulerJobOptions &options, SchedulerFunctionNoData callback
 ) {
-	if (!callback) {
+	if (!callback || !impl_) {
 		return SchedulerResult<uint32_t>::failure(SchedulerError::InvalidSchedule);
 	}
 	SchedulerFunction wrapped = [fn = std::move(callback)](void *) { fn(); };
 	CallbackRef ref{};
 	ref.kind = CallbackKind::OwningFunction;
-	ref.owningFn = std::make_shared<SchedulerFunction>(std::move(wrapped));
+	ref.owningFn = Strata::makeShared<SchedulerFunction>(
+	    impl_->config.memory.allocation,
+	    std::move(wrapped)
+	);
 	if (!ref.owningFn) {
 		return SchedulerResult<uint32_t>::failure(SchedulerError::NoMemory);
 	}
@@ -509,7 +551,13 @@ SchedulerResult<uint32_t> TempoScheduler::atDays(
 SchedulerResult<uint32_t> TempoScheduler::atDay(
     TempoWeekDay day, int hour, int minute, const char *name, SchedulerFunctionNoData callback
 ) {
-	return atDays(static_cast<uint8_t>(1U << static_cast<uint8_t>(day)), hour, minute, name, std::move(callback));
+	return atDays(
+	    static_cast<uint8_t>(1U << static_cast<uint8_t>(day)),
+	    hour,
+	    minute,
+	    name,
+	    std::move(callback)
+	);
 }
 
 SchedulerResult<uint32_t> TempoScheduler::addJobOnceUtc(
@@ -541,6 +589,13 @@ SchedulerResult<uint32_t> TempoScheduler::addJobImpl(
 		normalizedOptions.executorId = 0;
 	} else if (normalizedOptions.mode == SchedulerJobMode::DedicatedTask) {
 		normalizedOptions.executorId = 1;
+		if (!normalizedOptions.dedicatedTask) {
+			normalizedOptions.dedicatedTask = &impl_->config.defaultDedicatedTask;
+		}
+		if (!validStackSize(normalizedOptions.dedicatedTask->stackSize) ||
+		    !validOptionalPlacement(normalizedOptions.dedicatedTask->stackPlacement)) {
+			return SchedulerResult<uint32_t>::failure(SchedulerError::InvalidConfiguration);
+		}
 	}
 	if (normalizedOptions.mode != SchedulerJobMode::Inline &&
 	    impl_->executorFor(normalizedOptions.executorId) == nullptr) {
@@ -550,6 +605,7 @@ SchedulerResult<uint32_t> TempoScheduler::addJobImpl(
 	if (impl_->config.mode == TempoSchedulerMode::Background && impl_->service) {
 		return executeBackgroundCommand<AddJobCommand, SchedulerResult<uint32_t>>(
 		    *impl_->service,
+		    impl_->config.memory.allocation,
 		    impl_->config.service.controlTimeoutMs,
 		    SchedulerError::QueueFull,
 		    SchedulerError::Timeout,
@@ -575,6 +631,7 @@ SchedulerResult<void> TempoScheduler::cancelJob(uint32_t jobId) {
 	if (impl_->config.mode == TempoSchedulerMode::Background && impl_->service) {
 		return executeBackgroundCommand<CancelJobCommand, SchedulerResult<void>>(
 		    *impl_->service,
+		    impl_->config.memory.allocation,
 		    impl_->config.service.controlTimeoutMs,
 		    SchedulerError::QueueFull,
 		    SchedulerError::Timeout,
@@ -591,6 +648,7 @@ SchedulerResult<void> TempoScheduler::pauseJob(uint32_t jobId) {
 	if (impl_->config.mode == TempoSchedulerMode::Background && impl_->service) {
 		return executeBackgroundCommand<PauseJobCommand, SchedulerResult<void>>(
 		    *impl_->service,
+		    impl_->config.memory.allocation,
 		    impl_->config.service.controlTimeoutMs,
 		    SchedulerError::QueueFull,
 		    SchedulerError::Timeout,
@@ -607,6 +665,7 @@ SchedulerResult<void> TempoScheduler::resumeJob(uint32_t jobId) {
 	if (impl_->config.mode == TempoSchedulerMode::Background && impl_->service) {
 		return executeBackgroundCommand<ResumeJobCommand, SchedulerResult<void>>(
 		    *impl_->service,
+		    impl_->config.memory.allocation,
 		    impl_->config.service.controlTimeoutMs,
 		    SchedulerError::QueueFull,
 		    SchedulerError::Timeout,
@@ -623,6 +682,7 @@ SchedulerResult<void> TempoScheduler::cancelAll() {
 	if (impl_->config.mode == TempoSchedulerMode::Background && impl_->service) {
 		return executeBackgroundCommand<CancelAllCommand, SchedulerResult<void>>(
 		    *impl_->service,
+		    impl_->config.memory.allocation,
 		    impl_->config.service.controlTimeoutMs,
 		    SchedulerError::QueueFull,
 		    SchedulerError::Timeout,
@@ -639,6 +699,7 @@ SchedulerResult<void> TempoScheduler::refreshAllSchedules() {
 	if (impl_->config.mode == TempoSchedulerMode::Background && impl_->service) {
 		return executeBackgroundCommand<RefreshAllSchedulesCommand, SchedulerResult<void>>(
 		    *impl_->service,
+		    impl_->config.memory.allocation,
 		    impl_->config.service.controlTimeoutMs,
 		    SchedulerError::QueueFull,
 		    SchedulerError::Timeout,
@@ -648,6 +709,7 @@ SchedulerResult<void> TempoScheduler::refreshAllSchedules() {
 
 	const DateTime nowUtc = impl_->date.now();
 	impl_->drainManualEvents(nowUtc);
+	impl_->reapCompletedExecutors();
 	return impl_->manualCore.refreshAllSchedules(nowUtc);
 }
 
@@ -663,11 +725,13 @@ void TempoScheduler::tick(const DateTime &nowUtc) {
 		return;
 	}
 	impl_->drainManualEvents(nowUtc);
+	impl_->reapCompletedExecutors();
 	if (impl_->refreshTimeContextIfNeeded(nowUtc)) {
 		(void)impl_->manualCore.refreshAllSchedules(nowUtc);
 	}
 	impl_->manualCore.dispatchDue(nowUtc, *impl_);
 	impl_->drainManualEvents(nowUtc);
+	impl_->reapCompletedExecutors();
 }
 
 SchedulerResult<size_t> TempoScheduler::jobCount() const {
@@ -677,6 +741,7 @@ SchedulerResult<size_t> TempoScheduler::jobCount() const {
 	if (impl_->config.mode == TempoSchedulerMode::Background && impl_->service) {
 		return executeBackgroundCommand<JobCountCommand, SchedulerResult<size_t>>(
 		    *impl_->service,
+		    impl_->config.memory.allocation,
 		    impl_->config.service.controlTimeoutMs,
 		    SchedulerError::QueueFull,
 		    SchedulerError::Timeout,
@@ -695,6 +760,7 @@ SchedulerResult<void> TempoScheduler::getJobInfo(uint32_t jobId, JobInfo &out) c
 		const SchedulerResult<JobInfo> result =
 		    executeBackgroundCommand<GetJobInfoCommand, SchedulerResult<JobInfo>>(
 		        *impl_->service,
+		        impl_->config.memory.allocation,
 		        impl_->config.service.controlTimeoutMs,
 		        SchedulerError::QueueFull,
 		        SchedulerError::Timeout,
@@ -722,6 +788,7 @@ void TempoScheduler::setMinValidUnixSeconds(int64_t minEpochSeconds) {
 	if (impl_->config.mode == TempoSchedulerMode::Background && impl_->service) {
 		(void)executeBackgroundCommand<SetMinValidCommand, SchedulerResult<void>>(
 		    *impl_->service,
+		    impl_->config.memory.allocation,
 		    impl_->config.service.controlTimeoutMs,
 		    SchedulerError::QueueFull,
 		    SchedulerError::Timeout,

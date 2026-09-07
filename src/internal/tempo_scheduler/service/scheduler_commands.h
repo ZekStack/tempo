@@ -1,14 +1,12 @@
 #pragma once
 
+#include <Strata.h>
 #include <atomic>
 #include <cstdint>
 
-#include "../core/scheduler_core.h"
+#include <strata/freertos/BinarySemaphore.h>
 
-extern "C" {
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-}
+#include "../core/scheduler_core.h"
 
 enum class SchedulerCommandState : uint8_t {
 	Pending = 0,
@@ -19,8 +17,24 @@ enum class SchedulerCommandState : uint8_t {
 
 class SchedulerServiceCommand {
   public:
-	SchedulerServiceCommand();
-	virtual ~SchedulerServiceCommand();
+	SchedulerServiceCommand() noexcept;
+	virtual ~SchedulerServiceCommand() = default;
+
+	template <typename TCommand>
+	static TCommand *create(Strata::Placement placement) noexcept {
+		TCommand *command = Strata::create<TCommand>(placement);
+		if (!command) {
+			return nullptr;
+		}
+		if (!command->completion_) {
+			Strata::destroy(command);
+			return nullptr;
+		}
+		command->destroy_ = [](SchedulerServiceCommand *base) noexcept {
+			Strata::destroy(static_cast<TCommand *>(base));
+		};
+		return command;
+	}
 
 	void retain();
 	void release();
@@ -35,10 +49,12 @@ class SchedulerServiceCommand {
 	virtual void execute(SchedulerCore &core, Tempo &date, IExecutorResolver &executors) = 0;
 
   private:
+	using DestroyFn = void (*)(SchedulerServiceCommand *) noexcept;
+
 	void signal();
 
-	SemaphoreHandle_t completion_ = nullptr;
-	StaticSemaphore_t completionBuffer_{};
+	Strata::FreeRTOS::BinarySemaphore completion_{};
+	DestroyFn destroy_ = nullptr;
 	std::atomic<uint32_t> referenceCount_{1};
 	std::atomic<SchedulerCommandState> state_{SchedulerCommandState::Pending};
 };

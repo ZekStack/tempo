@@ -1,6 +1,9 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Strata.h>
+
+#include <optional>
 
 extern "C" {
 #include "freertos/FreeRTOS.h"
@@ -31,7 +34,7 @@ struct SchedulerServiceConfig {
 	uint32_t taskStackSize = 4096;
 	UBaseType_t taskPriority = 1;
 	BaseType_t coreId = tskNO_AFFINITY;
-	bool usePsramStack = false;
+	std::optional<Strata::Placement> stackPlacement{};
 	uint32_t controlTimeoutMs = 2000;
 };
 
@@ -41,7 +44,7 @@ struct WorkerPoolConfig {
 	uint32_t stackSize = 6144;
 	UBaseType_t priority = 1;
 	BaseType_t coreId = tskNO_AFFINITY;
-	bool usePsramStack = false;
+	std::optional<Strata::Placement> stackPlacement{};
 };
 
 struct DedicatedTaskOptions {
@@ -49,13 +52,16 @@ struct DedicatedTaskOptions {
 	uint32_t stackSize = 4096;
 	UBaseType_t priority = 1;
 	BaseType_t coreId = tskNO_AFFINITY;
-	bool usePsramStack = false;
+	std::optional<Strata::Placement> stackPlacement{};
 };
 
 struct SchedulerConfig {
 	TempoSchedulerMode mode = TempoSchedulerMode::Background;
 	int64_t minValidEpochSeconds = 1577836800;
-	bool usePSRAMMetadata = false;
+	Strata::MemoryPolicy memory{
+	    .allocation = Strata::Placement::PreferExternal,
+	    .taskStack = Strata::Placement::PreferExternal,
+	};
 	SchedulerServiceConfig service{};
 	WorkerPoolConfig defaultWorkerPool{};
 	DedicatedTaskOptions defaultDedicatedTask{};

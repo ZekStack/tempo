@@ -9,7 +9,8 @@
 
 template <typename T> class SchedulerArray {
   public:
-	explicit SchedulerArray(bool usePSRAM = false) : usePSRAM_(usePSRAM) {
+	explicit SchedulerArray(Strata::Placement placement = Strata::Placement::PreferExternal)
+	    : placement_(placement) {
 	}
 
 	~SchedulerArray() {
@@ -22,7 +23,7 @@ template <typename T> class SchedulerArray {
 
 	SchedulerArray(SchedulerArray &&other) noexcept
 	    : data_(other.data_), size_(other.size_), capacity_(other.capacity_),
-	      usePSRAM_(other.usePSRAM_) {
+	      placement_(other.placement_) {
 		other.data_ = nullptr;
 		other.size_ = 0;
 		other.capacity_ = 0;
@@ -37,7 +38,7 @@ template <typename T> class SchedulerArray {
 		data_ = other.data_;
 		size_ = other.size_;
 		capacity_ = other.capacity_;
-		usePSRAM_ = other.usePSRAM_;
+		placement_ = other.placement_;
 		other.data_ = nullptr;
 		other.size_ = 0;
 		other.capacity_ = 0;
@@ -60,7 +61,7 @@ template <typename T> class SchedulerArray {
 		if (requested <= capacity_) {
 			return true;
 		}
-		T *next = schedulerAllocate<T>(requested, usePSRAM_);
+		T *next = schedulerAllocate<T>(requested, placement_);
 		if (!next) {
 			return false;
 		}
@@ -153,20 +154,21 @@ template <typename T> class SchedulerArray {
 		--size_;
 	}
 
-	bool usePSRAM() const {
-		return usePSRAM_;
+	Strata::Placement placement() const {
+		return placement_;
 	}
 
   private:
 	T *data_ = nullptr;
 	std::size_t size_ = 0;
 	std::size_t capacity_ = 0;
-	bool usePSRAM_ = false;
+	Strata::Placement placement_ = Strata::Placement::PreferExternal;
 };
 
 class SchedulerOwnedString {
   public:
-	explicit SchedulerOwnedString(bool usePSRAM = false) : usePSRAM_(usePSRAM) {
+	explicit SchedulerOwnedString(Strata::Placement placement = Strata::Placement::PreferExternal)
+	    : placement_(placement) {
 	}
 
 	~SchedulerOwnedString() {
@@ -177,7 +179,7 @@ class SchedulerOwnedString {
 	SchedulerOwnedString &operator=(const SchedulerOwnedString &) = delete;
 
 	SchedulerOwnedString(SchedulerOwnedString &&other) noexcept
-	    : data_(other.data_), length_(other.length_), usePSRAM_(other.usePSRAM_) {
+	    : data_(other.data_), length_(other.length_), placement_(other.placement_) {
 		other.data_ = nullptr;
 		other.length_ = 0;
 	}
@@ -189,7 +191,7 @@ class SchedulerOwnedString {
 		schedulerDeallocate(data_);
 		data_ = other.data_;
 		length_ = other.length_;
-		usePSRAM_ = other.usePSRAM_;
+		placement_ = other.placement_;
 		other.data_ = nullptr;
 		other.length_ = 0;
 		return *this;
@@ -205,7 +207,7 @@ class SchedulerOwnedString {
 		while (text[length_] != '\0') {
 			++length_;
 		}
-		data_ = schedulerAllocate<char>(length_ + 1, usePSRAM_);
+		data_ = schedulerAllocate<char>(length_ + 1, placement_);
 		if (!data_) {
 			length_ = 0;
 			return false;
@@ -234,12 +236,13 @@ class SchedulerOwnedString {
   private:
 	char *data_ = nullptr;
 	std::size_t length_ = 0;
-	bool usePSRAM_ = false;
+	Strata::Placement placement_ = Strata::Placement::PreferExternal;
 };
 
 class SchedulerIdIndex {
   public:
-	explicit SchedulerIdIndex(bool usePSRAM = false) : usePSRAM_(usePSRAM) {
+	explicit SchedulerIdIndex(Strata::Placement placement = Strata::Placement::PreferExternal)
+	    : placement_(placement) {
 	}
 
 	bool set(uint32_t jobId, std::size_t slotIndex) {
@@ -320,7 +323,7 @@ class SchedulerIdIndex {
 
 	SchedulerIdIndex(SchedulerIdIndex &&other) noexcept
 	    : entries_(other.entries_), capacity_(other.capacity_), size_(other.size_),
-	      deletedCount_(other.deletedCount_), usePSRAM_(other.usePSRAM_) {
+	      deletedCount_(other.deletedCount_), placement_(other.placement_) {
 		other.entries_ = nullptr;
 		other.capacity_ = 0;
 		other.size_ = 0;
@@ -336,7 +339,7 @@ class SchedulerIdIndex {
 		capacity_ = other.capacity_;
 		size_ = other.size_;
 		deletedCount_ = other.deletedCount_;
-		usePSRAM_ = other.usePSRAM_;
+		placement_ = other.placement_;
 		other.entries_ = nullptr;
 		other.capacity_ = 0;
 		other.size_ = 0;
@@ -421,7 +424,7 @@ class SchedulerIdIndex {
 	}
 
 	bool rehash(std::size_t newCapacity) {
-		Entry *next = schedulerAllocate<Entry>(newCapacity, usePSRAM_);
+		Entry *next = schedulerAllocate<Entry>(newCapacity, placement_);
 		if (!next) {
 			return false;
 		}
@@ -462,5 +465,5 @@ class SchedulerIdIndex {
 	std::size_t capacity_ = 0;
 	std::size_t size_ = 0;
 	std::size_t deletedCount_ = 0;
-	bool usePSRAM_ = false;
+	Strata::Placement placement_ = Strata::Placement::PreferExternal;
 };

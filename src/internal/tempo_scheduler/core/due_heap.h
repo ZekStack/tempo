@@ -13,7 +13,8 @@ struct DueHeapEntry {
 
 class DueHeap {
   public:
-	explicit DueHeap(bool usePSRAM = false) : entries_(usePSRAM) {
+	explicit DueHeap(Strata::Placement placement = Strata::Placement::PreferExternal)
+	    : entries_(placement) {
 	}
 
 	bool push(const DueHeapEntry &entry) {
