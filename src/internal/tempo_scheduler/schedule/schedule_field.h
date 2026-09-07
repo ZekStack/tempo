@@ -5,7 +5,7 @@
 
 class ScheduleField {
   public:
-	static ScheduleField any();
+	static ScheduleField any() noexcept;
 	static ScheduleField only(int value);
 	static ScheduleField range(int from, int to);
 	static ScheduleField every(int step);
