@@ -1,11 +1,7 @@
 #pragma once
 
-#include <cstdint>
-#include <limits>
+typedef unsigned int TickType_t;
+typedef unsigned int StackType_t;
 
-using TickType_t = uint32_t;
-using StackType_t = uint32_t;
-
-static constexpr TickType_t portMAX_DELAY = std::numeric_limits<TickType_t>::max();
-
-#define pdMS_TO_TICKS(ms) static_cast<TickType_t>(ms)
+#define portMAX_DELAY 0xffffffffU
+#define pdMS_TO_TICKS(ms) ((TickType_t)(ms))
