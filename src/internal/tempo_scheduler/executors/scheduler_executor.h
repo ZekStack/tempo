@@ -26,6 +26,16 @@ struct SchedulerExecutorRuntime {
 		void *context = postEventContext.load(std::memory_order_acquire);
 		return fn != nullptr && fn(context, event);
 	}
+
+	bool publishReliable(const SchedulerEvent &event) const {
+		while (accepting.load(std::memory_order_acquire)) {
+			if (publish(event)) {
+				return true;
+			}
+			vTaskDelay(1);
+		}
+		return false;
+	}
 };
 
 struct CallbackRef {
