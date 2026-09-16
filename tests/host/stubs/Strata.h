@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <limits>
+#include <memory>
 
 namespace Strata {
 
@@ -17,6 +18,9 @@ struct MemoryPolicy {
 	Placement allocation{Placement::Default};
 	Placement taskStack{Placement::Internal};
 };
+
+template <typename T>
+using UniquePtr = std::unique_ptr<T>;
 
 inline bool validPlacement(Placement placement) noexcept {
 	switch (placement) {

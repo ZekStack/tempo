@@ -19,7 +19,7 @@ bool postCompletion(
 	if (!runtime) {
 		return false;
 	}
-	return runtime->publish(SchedulerEvent{
+	return runtime->publishReliable(SchedulerEvent{
 	    .kind = SchedulerEventKind::JobFinished,
 	    .jobId = jobId,
 	    .generation = generation,
