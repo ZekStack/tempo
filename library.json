@@ -1,6 +1,6 @@
 {
   "name": "Tempo",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Time, calendar, sun, moon, and scheduling toolkit for ESP32.",
   "keywords": [
     "esp32",
