@@ -14,13 +14,13 @@ Tempo helps you keep UTC-first time logic explicit in Arduino ESP32 projects whi
 * **UTC-first** - `DateTime` stores absolute UTC time, while local conversion is explicit.
 * **DST-aware** - POSIX timezone strings are used for local time and recurring schedules.
 * **ESP32-friendly** - Strata-backed FreeRTOS service tasks, queues, synchronization, and result-based errors.
-* **PSRAM-first** - Tempo `0.2.0` defaults movable allocations and task stacks to `Strata::Placement::PreferExternal`.
+* **PSRAM-first** - Tempo `0.2.1` defaults movable allocations and task stacks to `Strata::Placement::PreferExternal`.
 * **Sun and moon data** - sunrise, sunset, solar noon, daylight checks, moon angle, and illumination.
 * **Production-minded** - no explicit exception-based control flow, bindable callbacks, and C++20 with embedded constraints.
 
 ## Install
 
-Tempo `0.2.0` requires Strata `v0.1.2`.
+Tempo `0.2.1` requires Strata `v0.1.2`.
 
 ### PlatformIO
 
@@ -31,7 +31,7 @@ board = esp32dev
 framework = arduino
 
 lib_deps =
-  https://github.com/ZekStack/tempo.git#v0.2.0
+  https://github.com/ZekStack/tempo.git#v0.2.1
   https://github.com/ZekStack/strata.git#v0.1.2
 
 build_flags =
@@ -75,7 +75,7 @@ void setup() {
 	}
 
 	SchedulerConfig schedulerConfig;
-	// Both allocation and taskStack default to PreferExternal in Tempo 0.2.0.
+	// Both allocation and taskStack default to PreferExternal in Tempo 0.2.1.
 	scheduler.init(tempo, schedulerConfig);
 	scheduler.everyMinutes(10, "sync", []() {
 		Serial.println("scheduled job");
@@ -87,7 +87,7 @@ void loop() {
 }
 ```
 
-## Memory placement in 0.2.0
+## Memory placement in 0.2.1
 
 Tempo now uses Strata as its memory and FreeRTOS ownership layer.
 
@@ -99,7 +99,7 @@ config.memory.taskStack = Strata::Placement::PreferExternal;
 
 These are also the defaults. Individual scheduler tasks can override stack placement through their optional `stackPlacement` fields. `PreferExternal` uses external RAM when possible and falls back according to Strata's placement contract. FreeRTOS control blocks that Strata requires to remain internal are kept internal automatically.
 
-Tempo-owned date/configuration text buffers also prefer external memory by default in `0.2.0`.
+Tempo-owned date/configuration text buffers also prefer external memory by default in `0.2.1`.
 
 ## Important notes
 
@@ -171,7 +171,7 @@ scheduler.schedule(TempoSchedule::dailyAt(8, 30), options, []() {});
 | Memory policy | `PreferExternal` by default for movable storage and task stacks |
 | Dependencies | Strata `v0.1.2` |
 | Exceptions | Not used for public error handling |
-| Status | `0.2.0` |
+| Status | `0.2.1` |
 
 ## License
 
