@@ -1,5 +1,7 @@
 # Tempo
 
+> Current version: **v0.3.0**. Strata is pinned to **v0.1.4**.
+
 Tempo is a time, calendar, sun, moon, and scheduling toolkit for ESP32.
 
 Tempo helps you keep UTC-first time logic explicit in Arduino ESP32 projects while still providing timezone-aware local conversion, DST-aware calendar helpers, cached sun cycle data, moon phase data, and scheduled job execution.
@@ -20,7 +22,7 @@ Tempo helps you keep UTC-first time logic explicit in Arduino ESP32 projects whi
 
 ## Install
 
-Tempo `0.2.1` requires Strata `v0.1.2`.
+Tempo `0.3.0` requires Strata `v0.1.4`.
 
 ### PlatformIO
 
@@ -31,8 +33,8 @@ board = esp32dev
 framework = arduino
 
 lib_deps =
-  https://github.com/ZekStack/tempo.git#v0.2.1
-  https://github.com/ZekStack/strata.git#v0.1.2
+  https://github.com/ZekStack/tempo.git#v0.3.0
+  https://github.com/ZekStack/strata.git#v0.1.4
 
 build_flags =
   -std=gnu++20
@@ -169,9 +171,9 @@ scheduler.schedule(TempoSchedule::dailyAt(8, 30), options, []() {});
 | Language | C++20 |
 | Filesystem | none |
 | Memory policy | `PreferExternal` by default for movable storage and task stacks |
-| Dependencies | Strata `v0.1.2` |
+| Dependencies | Strata `v0.1.4` |
 | Exceptions | Not used for public error handling |
-| Status | `0.2.1` |
+| Status | `0.3.0` |
 
 ## License
 
