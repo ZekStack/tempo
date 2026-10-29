@@ -108,19 +108,34 @@ jobs:
         run: pio pkg install -g -p "${PIOARDUINO_PLATFORM_URL}"
 
       - name: Build library examples
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
+          LOG_DIR="${RUNNER_TEMP}/tempo-pio-logs"
+          mkdir -p "$LOG_DIR"
           for d in examples/*; do
             if [ -d "$d" ]; then
+              echo "Building $d on ${{ matrix.board }}"
               pio ci "$d" \
                 --board ${{ matrix.board }} \
                 --lib="." \
                 --project-option "platform=${PIOARDUINO_PLATFORM_URL}" \
+                --project-option "framework=arduino" \
                 --project-option "lib_deps=https://github.com/ZekStack/strata.git#${STRATA_VERSION}" \
                 --project-option "build_unflags=-std=gnu++11" \
-                --project-option "build_flags=-std=gnu++20"
+                --project-option "build_flags=-std=gnu++20" \
+                2>&1 | tee "$LOG_DIR/$(basename "$d").log"
             fi
           done
+
+      - name: Upload failed example build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tempo-pio-${{ matrix.board }}-failure
+          path: ${{ runner.temp }}/tempo-pio-logs/
+          if-no-files-found: warn
+          retention-days: 7
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
