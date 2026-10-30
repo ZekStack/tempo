@@ -156,7 +156,7 @@ DateTime utc = tempo.toUtc(localNow);
 
 TempoSunCycle sun = tempo.sunCycleToday();
 TempoMoonPhase moon = tempo.moonPhase();
-TempoSunPosition sunPosition = tempo.sunPosition(tempo.nowUtc());
+TempoSunPosition sunPosition = tempo.sunPosition();
 
 SchedulerJobOptions options;
 options.name = "job";

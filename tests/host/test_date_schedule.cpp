@@ -1,8 +1,10 @@
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <thread>
 
 #include "internal/tempo_date/date.h"
 #include "internal/tempo_scheduler/schedule/schedule_calculator.h"
@@ -276,6 +278,44 @@ void testSunPosition() {
 	       "explicit UTC position must not depend on current clock validity");
 }
 
+void testConcurrentSolarPositionUpdates() {
+	Tempo tempo;
+	initBudapestTempo(tempo, true);
+	const DateTime instant = tempo.fromUtc(2026, 6, 21, 12, 0, 0);
+	const TempoSunPosition budapest = tempo.sunPosition(47.4979f, 19.0402f, instant);
+	const TempoSunPosition tokyo = tempo.sunPosition(35.6762f, 139.6503f, instant);
+	std::atomic<bool> consistent{true};
+	std::atomic<bool> started{false};
+
+	std::thread reader([&]() {
+		started.store(true);
+		for (int i = 0; i < 2000; ++i) {
+			const TempoSunPosition position = tempo.sunPosition(instant);
+			const auto matches = [&](const TempoSunPosition &reference) {
+				return std::fabs(position.azimuthDegrees - reference.azimuthDegrees) < 0.0001 &&
+				       std::fabs(position.elevationDegrees - reference.elevationDegrees) < 0.0001;
+			};
+			if (!position.ok || !(matches(budapest) || matches(tokyo))) {
+				consistent.store(false);
+				return;
+			}
+		}
+	});
+	while (!started.load()) {
+		std::this_thread::yield();
+	}
+	for (int i = 0; i < 80; ++i) {
+		if (!tempo.updateLocation(35.6762f, 139.6503f, kTokyoTz) ||
+		    !tempo.updateLocation(47.4979f, 19.0402f, kBudapestTz)) {
+			consistent.store(false);
+			break;
+		}
+	}
+	reader.join();
+	expect(consistent.load(),
+	       "concurrent solar position reads must use a consistent coordinate snapshot");
+}
+
 void testScheduleValidation() {
 	expect(!ScheduleCalculator::validate(TempoSchedule::everyMinutes(90)),
 	       "everyMinutes values above 60 must be rejected");
@@ -314,6 +354,7 @@ int main() {
 	testLocationAndSunDateHandling();
 	testRuntimeLocationUpdate();
 	testSunPosition();
+	testConcurrentSolarPositionUpdates();
 	testScheduleValidation();
 
 	if (failures != 0) {
