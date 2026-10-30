@@ -208,6 +208,8 @@ Tempo::~Tempo() {
 }
 
 TempoResult Tempo::init(const TempoConfig &config) {
+	std::lock_guard<std::recursive_mutex> ntpLock(ntpMutex_);
+	std::lock_guard<std::recursive_mutex> sunCycleLock(sunCycleMutex_);
 	if (initialized_) {
 		return TempoResult::failure(TempoStatus::AlreadyInitialized, "tempo already initialized");
 	}
@@ -224,6 +226,7 @@ TempoResult Tempo::init(const TempoConfig &config) {
 
 void Tempo::deinit() {
 	std::lock_guard<std::recursive_mutex> lock(ntpMutex_);
+	std::lock_guard<std::recursive_mutex> sunCycleLock(sunCycleMutex_);
 	ntpSyncCallback_ = nullptr;
 	ntpSyncCallbackCallable_ = NtpSyncCallable{};
 	hasLastNtpSync_ = false;
@@ -402,6 +405,7 @@ TempoResult Tempo::syncNtp() {
 }
 
 void Tempo::setMinValidUnixSeconds(int64_t value) {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
 	minValidUnixSeconds_ = value;
 }
 

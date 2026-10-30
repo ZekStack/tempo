@@ -17,7 +17,7 @@ Tempo helps you keep UTC-first time logic explicit in Arduino ESP32 projects whi
 * **DST-aware** - POSIX timezone strings are used for local time and recurring schedules.
 * **ESP32-friendly** - Strata-backed FreeRTOS service tasks, queues, synchronization, and result-based errors.
 * **PSRAM-first** - Tempo `0.2.1` defaults movable allocations and task stacks to `Strata::Placement::PreferExternal`.
-* **Sun and moon data** - sunrise, sunset, solar noon, daylight checks, moon angle, and illumination.
+* **Sun and moon data** - sunrise, sunset, solar noon, on-demand solar azimuth/elevation, daylight checks, moon angle, and illumination.
 * **Production-minded** - no explicit exception-based control flow, bindable callbacks, and C++20 with embedded constraints.
 
 ## Install
@@ -111,6 +111,7 @@ Tempo-owned date/configuration text buffers also prefer external memory by defau
 * Tempo uses POSIX timezone strings for DST-aware local conversion. Local timezone operations are serialized because the C runtime timezone is process-global.
 * Latitude and longitude are optional, but both must be configured together before using stored-location sun APIs.
 * `sunCycleToday()` lazily calculates and caches the current local date. Date-taking daylight and sunrise/sunset match APIs calculate against the supplied date.
+* `sunPosition()` and its explicit UTC overloads compute geometric solar azimuth/elevation on demand without a cache or background task; callers decide their update cadence.
 * One-shot UTC schedules remain exact; recurring schedules evaluate in local time.
 * Scheduler control calls made from an inline scheduler callback return `SchedulerError::Busy` rather than waiting on the scheduler service task itself.
 * Strata-owned tasks never self-delete. Tempo hands completed task ownership back to another task before releasing the task stack and control block.
@@ -155,6 +156,7 @@ DateTime utc = tempo.toUtc(localNow);
 
 TempoSunCycle sun = tempo.sunCycleToday();
 TempoMoonPhase moon = tempo.moonPhase();
+TempoSunPosition sunPosition = tempo.sunPosition(tempo.nowUtc());
 
 SchedulerJobOptions options;
 options.name = "job";

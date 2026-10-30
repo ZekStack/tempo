@@ -86,6 +86,9 @@ double offsetMinutesForLocalClock(
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kSunAngle = 90.833; // standard atmospheric refraction angle in degrees
+// The supported UTC year range is 0001..9999 (proleptic Gregorian calendar).
+constexpr int64_t kMinSunPositionEpochSeconds = -62135596800LL;
+constexpr int64_t kMaxSunPositionEpochSecondsExclusive = 253402300800LL;
 
 double radToDeg(double rad) {
 	return 180.0 * rad / kPi;
@@ -188,6 +191,62 @@ double equationOfTime(double t) {
 	double etime = y * sin2l0 - 2.0 * e * sinm + 4.0 * e * y * sinm * cos2l0 -
 	               0.5 * y * y * sin4l0 - 1.25 * e * e * sin2m;
 	return radToDeg(etime) * 4.0;
+}
+
+TempoSunPosition computeSunPosition(float latitude, float longitude, const DateTime &atUtc) {
+	if (!validCoordinates(latitude, longitude) ||
+	    atUtc.epochSeconds < kMinSunPositionEpochSeconds ||
+	    atUtc.epochSeconds >= kMaxSunPositionEpochSecondsExclusive) {
+		return {};
+	}
+
+	// Julian day and solar angles use the exact UTC instant, not local clock time.
+	const double julianDay = 2440587.5 + static_cast<double>(atUtc.epochSeconds) / 86400.0;
+	const double centuries = fractionOfCentury(julianDay);
+	const double declination = sunDeclination(centuries);
+	const double eqTime = equationOfTime(centuries);
+	if (!std::isfinite(declination) || !std::isfinite(eqTime)) {
+		return {};
+	}
+
+	// UTC minutes since midnight, including seconds, wrap correctly for pre-1970 dates.
+	double utcMinutes = std::fmod(static_cast<double>(atUtc.epochSeconds) / 60.0, 1440.0);
+	if (utcMinutes < 0.0) {
+		utcMinutes += 1440.0;
+	}
+	double trueSolarMinutes =
+	    std::fmod(utcMinutes + eqTime + 4.0 * static_cast<double>(longitude), 1440.0);
+	if (trueSolarMinutes < 0.0) {
+		trueSolarMinutes += 1440.0;
+	}
+
+	const double hourAngle = degToRad(trueSolarMinutes / 4.0 - 180.0);
+	const double latRad = degToRad(static_cast<double>(latitude));
+	const double decRad = degToRad(declination);
+	const double sinLatitude = std::sin(latRad);
+	const double cosLatitude = std::cos(latRad);
+	const double sinDeclination = std::sin(decRad);
+	const double cosDeclination = std::cos(decRad);
+	const double cosHourAngle = std::cos(hourAngle);
+
+	// Sun direction components in the observer's east/north/up reference frame.
+	const double east = -cosDeclination * std::sin(hourAngle);
+	const double north = cosLatitude * sinDeclination -
+	                     sinLatitude * cosDeclination * cosHourAngle;
+	const double up = sinLatitude * sinDeclination +
+	                  cosLatitude * cosDeclination * cosHourAngle;
+	const double boundedUp = std::fmax(-1.0, std::fmin(1.0, up));
+	const double elevation = radToDeg(std::asin(boundedUp));
+
+	// Azimuth is undefined at the exact zenith/nadir; report zero by convention.
+	double azimuth = 0.0;
+	if (east * east + north * north > 1e-24) {
+		azimuth = radToDeg(std::atan2(east, north));
+		if (azimuth < 0.0) {
+			azimuth += 360.0;
+		}
+	}
+	return TempoSunPosition{true, azimuth, elevation, elevation >= 0.0};
 }
 
 double hourAngleSunrise(double lat, double solarDec) {
@@ -321,6 +380,36 @@ TempoSunEventResult buildTimeZoneAwareTempoSunEventResult(
 	return result;
 }
 } // namespace
+
+TempoSunPosition Tempo::sunPosition() const {
+	const DateTime atUtc = nowUtc();
+	{
+		std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
+		if (!initialized_ || atUtc.epochSeconds < minValidUnixSeconds_) {
+			return {};
+		}
+	}
+	return sunPosition(atUtc);
+}
+
+TempoSunPosition Tempo::sunPosition(const DateTime &atUtc) const {
+	float latitude;
+	float longitude;
+	{
+		std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
+		if (!initialized_ || !hasLocation_) {
+			return {};
+		}
+		latitude = latitude_;
+		longitude = longitude_;
+	}
+	return computeSunPosition(latitude, longitude, atUtc);
+}
+
+TempoSunPosition
+Tempo::sunPosition(float latitude, float longitude, const DateTime &atUtc) const {
+	return computeSunPosition(latitude, longitude, atUtc);
+}
 
 TempoSunEventResult Tempo::sunrise() const {
 	return sunrise(now());

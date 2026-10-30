@@ -35,9 +35,25 @@ Local calendar helpers such as `startOfDayLocal()`, `endOfDayLocal()`, `nextDail
 | `sunRiseTodayUtc()` / `sunSetTodayUtc()` | Return cached UTC event times for the current local date. |
 | `isSunRise(date)` / `isSunSet(date)` | Match the event calculated for the supplied date inside the configured window. |
 | `isDay(date)` | Check daylight using sunrise and sunset for the supplied date. |
+| `sunPosition()` | Compute current geometric azimuth/elevation for configured location. |
+| `sunPosition(atUtc)` | Compute geometric solar position at an explicit UTC instant using configured location. |
+| `sunPosition(latitude, longitude, atUtc)` | Compute solar position using explicit coordinates and UTC instant. |
 | `moonPhase()` | Return lunar phase angle and illumination. |
 
 Stored-location sun APIs return an invalid result until both latitude and longitude have been explicitly configured.
+
+```cpp
+const TempoSunPosition position = tempo.sunPosition(tempo.nowUtc());
+if (position.ok) {
+	// Azimuth clockwise from true north (0=N, 90=E, 180=S, 270=W).
+	// Geometric elevation in degrees above the astronomical horizon.
+	const double azimuth = position.azimuthDegrees;
+	const double elevation = position.elevationDegrees;
+	const bool isAboveHorizon = position.isAboveHorizon;
+}
+```
+
+Solar-position calls are stateless, synchronous, allocation-free, and do not schedule background work or cache results. The zero-argument overload checks the configured valid-clock threshold; explicit UTC overloads can calculate historical positions even if the system clock has not synchronized. Supported UTC years are 0001 through 9999. Solar azimuth is zero by convention when the Sun is directly overhead or underfoot, where horizontal direction is undefined. The result is a geometric solar-center position and does not include atmospheric refraction, the Sun's apparent radius, terrain, or obstruction; therefore `isAboveHorizon` may differ from `isDay()` near sunrise and sunset. Use UTC instants across DST transitions.
 
 ## Scheduler
 

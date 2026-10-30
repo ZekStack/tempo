@@ -108,6 +108,12 @@ struct TempoConfig {
 
 struct TempoSunEventResult { bool ok; DateTime value; };
 struct TempoMoonPhase { bool ok; int angleDegrees; double illumination; };
+struct TempoSunPosition {
+	bool ok = false;
+	double azimuthDegrees = 0.0;
+	double elevationDegrees = 0.0;
+	bool isAboveHorizon = false;
+};
 struct TempoSunCycle {
 	DateTime calculatedForDateUtc{};
 	LocalDateTime calculatedForLocalDate{};
@@ -251,6 +257,11 @@ class Tempo {
 	ParseResult parseDateTimeLocal(const char *str) const;
 	DateTime parseUtc(const char *str) const;
 	LocalDateTime parseLocal(const char *str) const;
+	// Geometric solar direction: clockwise azimuth from true north and elevation above the horizon.
+	// No caching, scheduling, timezone conversion, or allocation.
+	TempoSunPosition sunPosition() const;
+	TempoSunPosition sunPosition(const DateTime &atUtc) const;
+	TempoSunPosition sunPosition(float latitude, float longitude, const DateTime &atUtc) const;
 	TempoSunEventResult sunrise() const;
 	TempoSunEventResult sunset() const;
 	TempoSunEventResult sunrise(const DateTime &day) const;
