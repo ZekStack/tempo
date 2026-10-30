@@ -169,6 +169,13 @@ void testRuntimeLocationUpdate() {
 	       "invalid runtime coordinates must be rejected");
 	expect(tempo.toLocal(instant).hour == 21,
 	       "rejected runtime location update must not alter the existing timezone");
+
+	tempo.deinit();
+	const TempoResult afterDeinit = tempo.updateLocation(47.4979f, 19.0402f, kBudapestTz);
+	expect(!afterDeinit && afterDeinit.status == TempoStatus::NotInitialized,
+	       "location updates must reject deinitialized Tempo instances");
+	expect(!tempo.sunPosition(instant).ok,
+	       "rejected location update must not restore a deinitialized Tempo instance");
 }
 
 void testSunPosition() {
@@ -179,13 +186,14 @@ void testSunPosition() {
 	       "stored-location sun position requires configured coordinates");
 
 	// NREL SPA reference: Golden, Colorado, 2003-10-17 12:30:30 MST.
+	// The published zenith includes refraction; geometric elevation is about 39.872 degrees.
 	const TempoSunPosition reference =
 	    noLocation.sunPosition(39.742476f, -105.1786f, referenceUtc);
 	expect(reference.ok, "explicit coordinates should work without stored location");
-	expectNear(reference.azimuthDegrees, 194.340, 0.2,
+	expectNear(reference.azimuthDegrees, 194.340, 0.05,
 	           "solar azimuth should agree with reference ephemeris");
-	expectNear(reference.elevationDegrees, 39.888, 0.2,
-	           "solar elevation should agree with reference ephemeris");
+	expectNear(reference.elevationDegrees, 39.872, 0.01,
+	           "geometric solar elevation should exclude atmospheric refraction");
 
 	Tempo tempo;
 	initBudapestTempo(tempo, true);
@@ -274,6 +282,12 @@ void testSunPosition() {
 	       "Tempo should initialize with a future clock validity threshold");
 	expect(!invalidClock.sunPosition().ok,
 	       "current solar position must reject an untrusted system clock");
+	invalidClock.setMinValidUnixSeconds(0);
+	expect(invalidClock.sunPosition().ok,
+	       "current solar position must accept a clock that meets the updated threshold");
+	invalidClock.setMinValidUnixSeconds(253402300800LL);
+	expect(!invalidClock.sunPosition().ok,
+	       "current solar position must observe a raised clock-validity threshold");
 	expect(invalidClock.sunPosition(equinoxNoon).ok,
 	       "explicit UTC position must not depend on current clock validity");
 }

@@ -383,13 +383,17 @@ TempoSunEventResult buildTimeZoneAwareTempoSunEventResult(
 
 TempoSunPosition Tempo::sunPosition() const {
 	const DateTime atUtc = nowUtc();
+	float latitude;
+	float longitude;
 	{
 		std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
-		if (!initialized_ || atUtc.epochSeconds < minValidUnixSeconds_) {
+		if (!initialized_ || !hasLocation_ || atUtc.epochSeconds < minValidUnixSeconds_) {
 			return {};
 		}
+		latitude = latitude_;
+		longitude = longitude_;
 	}
-	return sunPosition(atUtc);
+	return computeSunPosition(latitude, longitude, atUtc);
 }
 
 TempoSunPosition Tempo::sunPosition(const DateTime &atUtc) const {
