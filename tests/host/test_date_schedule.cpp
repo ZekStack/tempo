@@ -1,6 +1,11 @@
+#include <atomic>
+#include <barrier>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
+#include <thread>
 
 #include "internal/tempo_date/date.h"
 #include "internal/tempo_scheduler/schedule/schedule_calculator.h"
@@ -18,6 +23,10 @@ void expect(bool condition, const char *message) {
 	}
 	std::cerr << "FAIL: " << message << '\n';
 	++failures;
+}
+
+void expectNear(double actual, double expected, double tolerance, const char *message) {
+	expect(std::isfinite(actual) && std::fabs(actual - expected) <= tolerance, message);
 }
 
 void initBudapestTempo(Tempo &tempo, bool withLocation = false) {
@@ -161,6 +170,219 @@ void testRuntimeLocationUpdate() {
 	       "invalid runtime coordinates must be rejected");
 	expect(tempo.toLocal(instant).hour == 21,
 	       "rejected runtime location update must not alter the existing timezone");
+
+	tempo.deinit();
+	const TempoResult afterDeinit = tempo.updateLocation(47.4979f, 19.0402f, kBudapestTz);
+	expect(!afterDeinit && afterDeinit.status == TempoStatus::NotInitialized,
+	       "location updates must reject deinitialized Tempo instances");
+	expect(!tempo.sunPosition(instant).ok,
+	       "rejected location update must not restore a deinitialized Tempo instance");
+}
+
+void testSunPosition() {
+	Tempo noLocation;
+	initBudapestTempo(noLocation);
+	const DateTime referenceUtc = noLocation.fromUtc(2003, 10, 17, 19, 30, 30);
+	expect(!noLocation.sunPosition(referenceUtc).ok,
+	       "stored-location sun position requires configured coordinates");
+
+	// NREL SPA reference: Golden, Colorado, 2003-10-17 12:30:30 MST.
+	// The published zenith includes refraction; geometric elevation is about 39.872 degrees.
+	const TempoSunPosition reference =
+	    noLocation.sunPosition(39.742476f, -105.1786f, referenceUtc);
+	expect(reference.ok, "explicit coordinates should work without stored location");
+	expectNear(reference.azimuthDegrees, 194.340, 0.05,
+	           "solar azimuth should agree with reference ephemeris");
+	expectNear(reference.elevationDegrees, 39.872, 0.01,
+	           "geometric solar elevation should exclude atmospheric refraction");
+
+	Tempo tempo;
+	initBudapestTempo(tempo, true);
+	const DateTime equinoxNoon = tempo.fromUtc(2026, 3, 20, 12, 0, 0);
+	const TempoSunPosition greenwich = tempo.sunPosition(51.4779f, 0.0f, equinoxNoon);
+	expect(greenwich.ok && greenwich.isAboveHorizon,
+	       "Greenwich equinox noon must be above the horizon");
+	expectNear(greenwich.azimuthDegrees, 177.6, 1.0,
+	           "Greenwich equinox solar azimuth must point south");
+	expectNear(greenwich.elevationDegrees, 38.5, 1.0,
+	           "Greenwich equinox solar elevation must match latitude");
+
+	const DateTime equinoxMorning = tempo.fromUtc(2026, 3, 20, 6, 0, 0);
+	const DateTime equinoxEvening = tempo.fromUtc(2026, 3, 20, 18, 0, 0);
+	const TempoSunPosition east = tempo.sunPosition(0.0f, 0.0f, equinoxMorning);
+	const TempoSunPosition west = tempo.sunPosition(0.0f, 0.0f, equinoxEvening);
+	expect(east.ok && west.ok, "equatorial sunrise and sunset position should be valid");
+	expectNear(east.azimuthDegrees, 90.0, 2.0, "morning sun should be east");
+	expectNear(west.azimuthDegrees, 270.0, 2.0, "evening sun should be west");
+	expectNear(east.elevationDegrees, 0.0, 4.0, "morning sun should be near horizon");
+	expectNear(west.elevationDegrees, 0.0, 4.0, "evening sun should be near horizon");
+
+	const TempoSunPosition daytime = tempo.sunPosition(tempo.fromUtc(2026, 6, 21, 12));
+	const TempoSunPosition nighttime = tempo.sunPosition(tempo.fromUtc(2026, 6, 21, 0));
+	expect(daytime.ok && daytime.isAboveHorizon, "summer daytime sun is above horizon");
+	expect(nighttime.ok && !nighttime.isAboveHorizon,
+	       "summer midnight sun is below horizon in Budapest");
+	const TempoSunPosition later = tempo.sunPosition(tempo.fromUtc(2026, 6, 21, 12, 1));
+	expect(later.ok && std::fabs(later.azimuthDegrees - daytime.azimuthDegrees) > 0.01,
+	       "each requested minute must compute a fresh solar position");
+
+	const DateTime springBefore = tempo.fromUtc(2026, 3, 29, 0, 30, 0);
+	const DateTime springAfter = tempo.fromUtc(2026, 3, 29, 1, 30, 0);
+	const TempoSunPosition springPositionBefore = tempo.sunPosition(springBefore);
+	const TempoSunPosition springPositionAfter = tempo.sunPosition(springAfter);
+	expect(springPositionBefore.ok && springPositionAfter.ok &&
+	           springPositionAfter.elevationDegrees > springPositionBefore.elevationDegrees,
+	       "solar position must advance normally through spring DST transition");
+
+	const DateTime fallBefore = tempo.fromUtc(2026, 10, 25, 0, 30, 0);
+	const DateTime fallAfter = tempo.fromUtc(2026, 10, 25, 1, 30, 0);
+	const TempoSunPosition fallPositionBefore = tempo.sunPosition(fallBefore);
+	const TempoSunPosition fallPositionAfter = tempo.sunPosition(fallAfter);
+	expect(fallPositionBefore.ok && fallPositionAfter.ok &&
+	           fallPositionAfter.elevationDegrees > fallPositionBefore.elevationDegrees,
+	       "solar position must advance normally through repeated local DST hour");
+
+	const TempoSunPosition northPole = tempo.sunPosition(90.0f, 0.0f, equinoxNoon);
+	const TempoSunPosition southPole = tempo.sunPosition(-90.0f, 0.0f, equinoxNoon);
+	expect(northPole.ok && southPole.ok &&
+	           std::isfinite(northPole.azimuthDegrees) &&
+	           std::isfinite(southPole.elevationDegrees),
+	       "geographic poles must produce finite results");
+
+	expect(!tempo.sunPosition(91.0f, 0.0f, equinoxNoon).ok,
+	       "out-of-range latitude must be rejected");
+	expect(!tempo.sunPosition(0.0f, 181.0f, equinoxNoon).ok,
+	       "out-of-range longitude must be rejected");
+	expect(!tempo.sunPosition(std::numeric_limits<float>::quiet_NaN(), 0.0f, equinoxNoon).ok,
+	       "nonfinite coordinates must be rejected");
+	expect(!tempo.sunPosition(0.0f, 0.0f,
+	                          DateTime{std::numeric_limits<int64_t>::max()})
+	            .ok,
+	       "unrepresentable UTC dates must be rejected");
+
+	const TempoSunPosition original = tempo.sunPosition(equinoxNoon);
+	expect(static_cast<bool>(tempo.updateLocation(35.6762f, 139.6503f, kTokyoTz)),
+	       "updating the location for solar position must succeed");
+	const TempoSunPosition updated = tempo.sunPosition(equinoxNoon);
+	const TempoSunPosition expected = tempo.sunPosition(35.6762f, 139.6503f, equinoxNoon);
+	expect(updated.ok && expected.ok && original.ok,
+	       "stored and explicit solar positions must remain valid after location update");
+	expectNear(updated.azimuthDegrees, expected.azimuthDegrees, 0.0001,
+	           "stored azimuth must use the updated location");
+	expectNear(updated.elevationDegrees, expected.elevationDegrees, 0.0001,
+	           "stored elevation must use the updated location");
+	expect(std::fabs(updated.elevationDegrees - original.elevationDegrees) > 1.0,
+	       "location updates must not reuse old position results");
+
+	Tempo invalidClock;
+	TempoConfig config;
+	config.latitude = 47.4979f;
+	config.longitude = 19.0402f;
+	config.minValidUnixSeconds = 253402300800LL;
+	expect(static_cast<bool>(invalidClock.init(config)),
+	       "Tempo should initialize with a future clock validity threshold");
+	expect(!invalidClock.sunPosition().ok,
+	       "current solar position must reject an untrusted system clock");
+	invalidClock.setMinValidUnixSeconds(0);
+	expect(invalidClock.sunPosition().ok,
+	       "current solar position must accept a clock that meets the updated threshold");
+	invalidClock.setMinValidUnixSeconds(253402300800LL);
+	expect(!invalidClock.sunPosition().ok,
+	       "current solar position must observe a raised clock-validity threshold");
+	expect(invalidClock.sunPosition(equinoxNoon).ok,
+	       "explicit UTC position must not depend on current clock validity");
+}
+
+void testConcurrentSolarPositionUpdates() {
+	Tempo tempo;
+	initBudapestTempo(tempo, true);
+	const DateTime instant = tempo.fromUtc(2026, 6, 21, 12, 0, 0);
+	const TempoSunPosition budapest = tempo.sunPosition(47.4979f, 19.0402f, instant);
+	const TempoSunPosition tokyo = tempo.sunPosition(35.6762f, 139.6503f, instant);
+	constexpr int kPhases = 64;
+	constexpr int kReadsPerPhase = 32;
+	constexpr int kLocationUpdatesPerPhase = 2;
+	std::barrier phaseStart(2);
+	std::barrier phaseEnd(2);
+	std::atomic<bool> consistent{true};
+
+	std::thread reader([&]() {
+		for (int phase = 0; phase < kPhases; ++phase) {
+			// Both threads enter every phase together, not just once at startup.
+			phaseStart.arrive_and_wait();
+			for (int sample = 0; sample < kReadsPerPhase; ++sample) {
+				const TempoSunPosition position = tempo.sunPosition(instant);
+				const auto matches = [&](const TempoSunPosition &reference) {
+					return std::fabs(position.azimuthDegrees - reference.azimuthDegrees) < 0.0001 &&
+					       std::fabs(position.elevationDegrees - reference.elevationDegrees) <
+					           0.0001;
+				};
+				if (!position.ok || !(matches(budapest) || matches(tokyo))) {
+					consistent.store(false);
+				}
+			}
+			phaseEnd.arrive_and_wait();
+		}
+	});
+
+	for (int phase = 0; phase < kPhases; ++phase) {
+		phaseStart.arrive_and_wait();
+		for (int update = 0; update < kLocationUpdatesPerPhase; ++update) {
+			if (!tempo.updateLocation(35.6762f, 139.6503f, kTokyoTz) ||
+			    !tempo.updateLocation(47.4979f, 19.0402f, kBudapestTz)) {
+				consistent.store(false);
+			}
+		}
+		phaseEnd.arrive_and_wait();
+	}
+	reader.join();
+	expect(consistent.load(),
+	       "concurrent solar position reads must use a consistent coordinate snapshot");
+}
+
+void testConcurrentClockValidityThreshold() {
+	Tempo tempo;
+	initBudapestTempo(tempo, true);
+	constexpr int64_t kValidThreshold = 0;
+	constexpr int64_t kInvalidThreshold = 253402300800LL;
+	tempo.setMinValidUnixSeconds(kValidThreshold);
+	expect(tempo.minValidUnixSeconds() == kValidThreshold && tempo.isValidTime(),
+	       "clock-validity readers must observe the accepted threshold");
+	tempo.setMinValidUnixSeconds(kInvalidThreshold);
+	expect(tempo.minValidUnixSeconds() == kInvalidThreshold && !tempo.isValidTime(),
+	       "clock-validity readers must observe the rejected threshold");
+
+	constexpr int kPhases = 64;
+	constexpr int kReadsPerPhase = 32;
+	std::barrier phaseStart(2);
+	std::barrier phaseEnd(2);
+	std::atomic<bool> consistent{true};
+	std::thread reader([&]() {
+		for (int phase = 0; phase < kPhases; ++phase) {
+			phaseStart.arrive_and_wait();
+			for (int sample = 0; sample < kReadsPerPhase; ++sample) {
+				const int64_t value = tempo.minValidUnixSeconds();
+				if (value != kValidThreshold && value != kInvalidThreshold) {
+					consistent.store(false);
+				}
+				// Exercise the other threshold reader during concurrent setter calls.
+				(void)tempo.isValidTime();
+			}
+			phaseEnd.arrive_and_wait();
+		}
+	});
+	for (int phase = 0; phase < kPhases; ++phase) {
+		phaseStart.arrive_and_wait();
+		for (int update = 0; update < 8; ++update) {
+			tempo.setMinValidUnixSeconds(kValidThreshold);
+			tempo.setMinValidUnixSeconds(kInvalidThreshold);
+		}
+		phaseEnd.arrive_and_wait();
+	}
+	reader.join();
+	expect(consistent.load(), "concurrent clock-validity reads must see complete thresholds");
+	expect(tempo.minValidUnixSeconds() == kInvalidThreshold && !tempo.isValidTime(),
+	       "clock-validity readers must observe the final threshold");
 }
 
 void testScheduleValidation() {
@@ -200,6 +422,9 @@ int main() {
 	testIndependentInstanceTimezones();
 	testLocationAndSunDateHandling();
 	testRuntimeLocationUpdate();
+	testSunPosition();
+	testConcurrentSolarPositionUpdates();
+	testConcurrentClockValidityThreshold();
 	testScheduleValidation();
 
 	if (failures != 0) {

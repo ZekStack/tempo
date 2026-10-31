@@ -9,6 +9,8 @@ TempoResult Tempo::updateLocation(
     float longitude,
     const char *timeZone
 ) {
+	std::lock_guard<std::recursive_mutex> ntpLock(ntpMutex_);
+	std::lock_guard<std::recursive_mutex> sunCycleLock(sunCycleMutex_);
 	if (!initialized_) {
 		return TempoResult::failure(
 		    TempoStatus::NotInitialized,
@@ -24,8 +26,6 @@ TempoResult Tempo::updateLocation(
 		);
 	}
 
-	std::lock_guard<std::recursive_mutex> ntpLock(ntpMutex_);
-	std::lock_guard<std::recursive_mutex> sunCycleLock(sunCycleMutex_);
 	latitude_ = latitude;
 	longitude_ = longitude;
 	hasLocation_ = true;
