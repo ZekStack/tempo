@@ -53,7 +53,9 @@ if (position.ok) {
 }
 ```
 
-Solar-position calls are stateless, synchronous, allocation-free, and do not schedule background work or cache results. The zero-argument overload checks the configured valid-clock threshold; explicit UTC overloads can calculate historical positions even if the system clock has not synchronized. Supported UTC years are 0001 through 9999. Solar azimuth is zero by convention when the Sun is directly overhead or underfoot, where horizontal direction is undefined. The result is a geometric solar-center position and does not include atmospheric refraction, the Sun's apparent radius, terrain, or obstruction; therefore `isAboveHorizon` may differ from `isDay()` near sunrise and sunset. Use UTC instants across DST transitions.
+Solar-position calls are stateless, synchronous, allocation-free, and do not schedule background work or cache results. The zero-argument overload checks the configured valid-clock threshold; explicit UTC overloads can calculate historical positions even if the system clock has not synchronized. Solar azimuth is zero by convention when the Sun is directly overhead or underfoot, where horizontal direction is undefined. The result is a geometric solar-center position and does not include atmospheric refraction, the Sun's apparent radius, terrain, or obstruction; therefore `isAboveHorizon` may differ from `isDay()` near sunrise and sunset. Use UTC instants across DST transitions.
+
+UTC years 0001 through 9999 (proleptic Gregorian) are accepted as an **input range, not an accuracy guarantee**. The NOAA/Meeus-style approximate equations are most reliable around 1800–2100; potential errors grow for dates far outside that period. Tempo's NREL SPA regression reference validates a modern (2003) instant, not the full accepted range. For precision-sensitive calculations far outside the modern era, use a validated ephemeris. See [NOAA solar calculation details](https://gml.noaa.gov/grad/solcalc/calcdetails.html).
 
 ## Scheduler
 

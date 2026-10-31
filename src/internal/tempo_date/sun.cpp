@@ -86,7 +86,7 @@ double offsetMinutesForLocalClock(
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kSunAngle = 90.833; // standard atmospheric refraction angle in degrees
-// The supported UTC year range is 0001..9999 (proleptic Gregorian calendar).
+// Accepted UTC years are 0001..9999 (proleptic Gregorian); this is not an accuracy guarantee.
 constexpr int64_t kMinSunPositionEpochSeconds = -62135596800LL;
 constexpr int64_t kMaxSunPositionEpochSecondsExclusive = 253402300800LL;
 

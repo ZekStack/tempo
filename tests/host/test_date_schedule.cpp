@@ -1,4 +1,5 @@
 #include <atomic>
+#include <barrier>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -298,36 +299,90 @@ void testConcurrentSolarPositionUpdates() {
 	const DateTime instant = tempo.fromUtc(2026, 6, 21, 12, 0, 0);
 	const TempoSunPosition budapest = tempo.sunPosition(47.4979f, 19.0402f, instant);
 	const TempoSunPosition tokyo = tempo.sunPosition(35.6762f, 139.6503f, instant);
+	constexpr int kPhases = 64;
+	constexpr int kReadsPerPhase = 32;
+	constexpr int kLocationUpdatesPerPhase = 2;
+	std::barrier phaseStart(2);
+	std::barrier phaseEnd(2);
 	std::atomic<bool> consistent{true};
-	std::atomic<bool> started{false};
 
 	std::thread reader([&]() {
-		started.store(true);
-		for (int i = 0; i < 2000; ++i) {
-			const TempoSunPosition position = tempo.sunPosition(instant);
-			const auto matches = [&](const TempoSunPosition &reference) {
-				return std::fabs(position.azimuthDegrees - reference.azimuthDegrees) < 0.0001 &&
-				       std::fabs(position.elevationDegrees - reference.elevationDegrees) < 0.0001;
-			};
-			if (!position.ok || !(matches(budapest) || matches(tokyo))) {
-				consistent.store(false);
-				return;
+		for (int phase = 0; phase < kPhases; ++phase) {
+			// Both threads enter every phase together, not just once at startup.
+			phaseStart.arrive_and_wait();
+			for (int sample = 0; sample < kReadsPerPhase; ++sample) {
+				const TempoSunPosition position = tempo.sunPosition(instant);
+				const auto matches = [&](const TempoSunPosition &reference) {
+					return std::fabs(position.azimuthDegrees - reference.azimuthDegrees) < 0.0001 &&
+					       std::fabs(position.elevationDegrees - reference.elevationDegrees) <
+					           0.0001;
+				};
+				if (!position.ok || !(matches(budapest) || matches(tokyo))) {
+					consistent.store(false);
+				}
 			}
+			phaseEnd.arrive_and_wait();
 		}
 	});
-	while (!started.load()) {
-		std::this_thread::yield();
-	}
-	for (int i = 0; i < 80; ++i) {
-		if (!tempo.updateLocation(35.6762f, 139.6503f, kTokyoTz) ||
-		    !tempo.updateLocation(47.4979f, 19.0402f, kBudapestTz)) {
-			consistent.store(false);
-			break;
+
+	for (int phase = 0; phase < kPhases; ++phase) {
+		phaseStart.arrive_and_wait();
+		for (int update = 0; update < kLocationUpdatesPerPhase; ++update) {
+			if (!tempo.updateLocation(35.6762f, 139.6503f, kTokyoTz) ||
+			    !tempo.updateLocation(47.4979f, 19.0402f, kBudapestTz)) {
+				consistent.store(false);
+			}
 		}
+		phaseEnd.arrive_and_wait();
 	}
 	reader.join();
 	expect(consistent.load(),
 	       "concurrent solar position reads must use a consistent coordinate snapshot");
+}
+
+void testConcurrentClockValidityThreshold() {
+	Tempo tempo;
+	initBudapestTempo(tempo, true);
+	constexpr int64_t kValidThreshold = 0;
+	constexpr int64_t kInvalidThreshold = 253402300800LL;
+	tempo.setMinValidUnixSeconds(kValidThreshold);
+	expect(tempo.minValidUnixSeconds() == kValidThreshold && tempo.isValidTime(),
+	       "clock-validity readers must observe the accepted threshold");
+	tempo.setMinValidUnixSeconds(kInvalidThreshold);
+	expect(tempo.minValidUnixSeconds() == kInvalidThreshold && !tempo.isValidTime(),
+	       "clock-validity readers must observe the rejected threshold");
+
+	constexpr int kPhases = 64;
+	constexpr int kReadsPerPhase = 32;
+	std::barrier phaseStart(2);
+	std::barrier phaseEnd(2);
+	std::atomic<bool> consistent{true};
+	std::thread reader([&]() {
+		for (int phase = 0; phase < kPhases; ++phase) {
+			phaseStart.arrive_and_wait();
+			for (int sample = 0; sample < kReadsPerPhase; ++sample) {
+				const int64_t value = tempo.minValidUnixSeconds();
+				if (value != kValidThreshold && value != kInvalidThreshold) {
+					consistent.store(false);
+				}
+				// Exercise the other threshold reader during concurrent setter calls.
+				(void)tempo.isValidTime();
+			}
+			phaseEnd.arrive_and_wait();
+		}
+	});
+	for (int phase = 0; phase < kPhases; ++phase) {
+		phaseStart.arrive_and_wait();
+		for (int update = 0; update < 8; ++update) {
+			tempo.setMinValidUnixSeconds(kValidThreshold);
+			tempo.setMinValidUnixSeconds(kInvalidThreshold);
+		}
+		phaseEnd.arrive_and_wait();
+	}
+	reader.join();
+	expect(consistent.load(), "concurrent clock-validity reads must see complete thresholds");
+	expect(tempo.minValidUnixSeconds() == kInvalidThreshold && !tempo.isValidTime(),
+	       "clock-validity readers must observe the final threshold");
 }
 
 void testScheduleValidation() {
@@ -369,6 +424,7 @@ int main() {
 	testRuntimeLocationUpdate();
 	testSunPosition();
 	testConcurrentSolarPositionUpdates();
+	testConcurrentClockValidityThreshold();
 	testScheduleValidation();
 
 	if (failures != 0) {

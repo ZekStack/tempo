@@ -410,11 +410,14 @@ void Tempo::setMinValidUnixSeconds(int64_t value) {
 }
 
 int64_t Tempo::minValidUnixSeconds() const {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
 	return minValidUnixSeconds_;
 }
 
 bool Tempo::isValidTime() const {
-	return now().epochSeconds >= minValidUnixSeconds_;
+	const DateTime currentUtc = nowUtc();
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
+	return currentUtc.epochSeconds >= minValidUnixSeconds_;
 }
 
 uint64_t Tempo::unixSeconds() const {
