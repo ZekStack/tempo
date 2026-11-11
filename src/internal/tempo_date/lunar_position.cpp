@@ -166,7 +166,7 @@ struct Cartesian {
 	double z;
 };
 
-double radians(double degrees) {
+double wrappedRadians(double degrees) {
 	return std::remainder(degrees, 360.0) * kRadians;
 }
 
@@ -182,22 +182,24 @@ bool validCoordinates(float latitude, float longitude) {
 Cartesian moonEquatorial(int64_t epoch) {
 	// Approximate TT - UTC for modern dates. Earth rotation below uses UTC as UT1.
 	const double t = (static_cast<double>(epoch - kJ2000Utc) + 69.184) / (36525.0 * kDay);
-	const double meanLongitude = radians(
+	const double meanLongitude = wrappedRadians(
 	    218.3164477 + t * (481267.88123421 + t * (-0.0015786 + t * (1.0 / 538841 - t / 65194000)))
 	);
-	const double d = radians(
+	const double d = wrappedRadians(
 	    297.8501921 + t * (445267.1114034 + t * (-0.0018819 + t * (1.0 / 545868 - t / 113065000)))
 	);
-	const double m = radians(357.5291092 + t * (35999.0502909 + t * (-0.0001536 + t / 24490000)));
-	const double mp = radians(
+	const double m = wrappedRadians(
+	    357.5291092 + t * (35999.0502909 + t * (-0.0001536 + t / 24490000))
+	);
+	const double mp = wrappedRadians(
 	    134.9633964 + t * (477198.8675055 + t * (0.0087414 + t * (1.0 / 69699 - t / 14712000)))
 	);
-	const double f = radians(
+	const double f = wrappedRadians(
 	    93.2720950 + t * (483202.0175233 + t * (-0.0036539 + t * (-1.0 / 3526000 + t / 863310000)))
 	);
-	const double a1 = radians(119.75 + 131.849 * t);
-	const double a2 = radians(53.09 + 479264.290 * t);
-	const double a3 = radians(313.45 + 481266.484 * t);
+	const double a1 = wrappedRadians(119.75 + 131.849 * t);
+	const double a2 = wrappedRadians(53.09 + 479264.290 * t);
+	const double a3 = wrappedRadians(313.45 + 481266.484 * t);
 	const double e = 1.0 - t * (0.002516 + 0.0000074 * t);
 	const double eccentricity[] = {1.0, e, e * e};
 	const auto angle = [=](const LunarArgument &arg) {
@@ -249,7 +251,7 @@ class Observer {
 	Cartesian horizontal(int64_t epoch, const Cartesian &moon) const {
 		const double days = static_cast<double>(epoch - kJ2000Utc) / kDay;
 		const double centuries = days / 36525.0;
-		const double sidereal = radians(
+		const double sidereal = wrappedRadians(
 		    280.46061837 + 360.98564736629 * days +
 		    centuries * centuries * (0.000387933 - centuries / 38710000.0) + longitude_
 		);
