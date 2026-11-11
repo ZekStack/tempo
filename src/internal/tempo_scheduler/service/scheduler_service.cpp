@@ -1,5 +1,7 @@
 #include "scheduler_service.h"
 
+#include <algorithm>
+
 namespace {
 constexpr uint32_t kIdlePollMs = 1000;
 
@@ -249,6 +251,11 @@ void SchedulerService::run() {
 			waitTicks = scheduler_service_detail::nextWakeTicks(
 			    date_, nowUtc, hasNextDue, nextEpochSeconds, waitTicks
 			);
+			// Reuse the idle polling interval to notice location changes even
+			// when the next lunar event is days away.
+			if (core_.hasActiveMoonEventJobs()) {
+				waitTicks = std::min(waitTicks, pdMS_TO_TICKS(kIdlePollMs));
+			}
 		}
 
 		if (wake_) {

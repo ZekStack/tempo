@@ -116,6 +116,14 @@ class TempoScheduler {
 	SchedulerResult<uint32_t> everySunSet(
 	    const char *name, const TempoDuration &offset, SchedulerFunctionNoData callback
 	);
+	SchedulerResult<uint32_t> everyMoonRise(const char *name, SchedulerFunctionNoData callback);
+	SchedulerResult<uint32_t> everyMoonRise(
+	    const char *name, const TempoDuration &offset, SchedulerFunctionNoData callback
+	);
+	SchedulerResult<uint32_t> everyMoonSet(const char *name, SchedulerFunctionNoData callback);
+	SchedulerResult<uint32_t> everyMoonSet(
+	    const char *name, const TempoDuration &offset, SchedulerFunctionNoData callback
+	);
 	SchedulerResult<uint32_t> atDays(
 	    uint8_t dowMask, int hour, int minute, const char *name, SchedulerFunctionNoData callback
 	);

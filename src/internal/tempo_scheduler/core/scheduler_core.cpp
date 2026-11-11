@@ -1,7 +1,13 @@
 #include "scheduler_core.h"
 
+#include <algorithm>
+
 namespace {
 constexpr int64_t kRetryDelaySeconds = 1;
+
+bool isMoonEventSchedule(const TempoSchedule &schedule) {
+	return schedule.kind == ScheduleKind::Moonrise || schedule.kind == ScheduleKind::Moonset;
+}
 
 CallbackRef makeEmptyCallback() {
 	return CallbackRef{};
@@ -14,7 +20,8 @@ SchedulerCore::SchedulerCore(
     Strata::Placement allocationPlacement
 )
     : date_(date), minValidEpochSeconds_(minValidEpochSeconds),
-      allocationPlacement_(allocationPlacement), jobs_(allocationPlacement),
+      allocationPlacement_(allocationPlacement), locationRevision_(date.locationRevision()),
+      jobs_(allocationPlacement),
       freeSlots_(allocationPlacement), pendingSchedules_(allocationPlacement),
       jobIndex_(allocationPlacement), dueHeap_(allocationPlacement) {
 }
@@ -54,8 +61,19 @@ bool SchedulerCore::computeNextForJob(JobRecord &record, const DateTime &fromUtc
 		record.hasNext = true;
 		return true;
 	}
-	record.hasNext =
-	    ScheduleCalculator::computeNext(date_, record.schedule, fromUtc, record.nextRunUtc);
+	const bool moonEvent = isMoonEventSchedule(record.schedule);
+	const DateTime searchFrom = moonEvent
+	                                ? DateTime{std::max(
+	                                      fromUtc.epochSeconds, record.lastDispatchedMoonEpoch + 1
+	                                  )}
+	                                : fromUtc;
+	record.hasNext = (!moonEvent || clockValid(fromUtc)) &&
+	                 ScheduleCalculator::computeNext(
+	                     date_, record.schedule, searchFrom, record.nextRunUtc
+	                 );
+	if (moonEvent && record.hasNext) {
+		record.moonEventDueUtc = record.nextRunUtc;
+	}
 	return record.hasNext;
 }
 
@@ -116,7 +134,11 @@ void SchedulerCore::drainPendingSchedules(const DateTime &nowUtc) {
 			record.hasNext = false;
 			continue;
 		}
-		if (computeNextForJob(record, record.scheduleFromUtc) && !pushDue(slotIndex, record)) {
+		const DateTime fromUtc =
+		    isMoonEventSchedule(record.schedule) && !clockValid(record.scheduleFromUtc)
+		        ? nowUtc
+		        : record.scheduleFromUtc;
+		if (computeNextForJob(record, fromUtc) && !pushDue(slotIndex, record)) {
 			record.hasNext = false;
 		}
 	}
@@ -321,12 +343,24 @@ SchedulerResult<void> SchedulerCore::cancelAll() {
 }
 
 SchedulerResult<void> SchedulerCore::refreshAllSchedules(const DateTime &nowUtc) {
+	locationRevision_ = date_.locationRevision();
+	return refreshSchedules(nowUtc, false);
+}
+
+SchedulerResult<void>
+SchedulerCore::refreshSchedules(const DateTime &nowUtc, bool moonEventsOnly) {
 	for (size_t index = 0; index < jobs_.size(); ++index) {
 		JobRecord &record = jobs_[index];
 		if (!record.occupied || record.canceled || record.paused) {
 			continue;
 		}
-		if (record.schedule.isOneShot || record.schedule.kind == ScheduleKind::OneShotUtc) {
+		if (record.schedule.isOneShot || record.schedule.kind == ScheduleKind::OneShotUtc ||
+		    (moonEventsOnly && !isMoonEventSchedule(record.schedule))) {
+			continue;
+		}
+
+		if (isMoonEventSchedule(record.schedule) && !clockValid(nowUtc)) {
+			(void)queueScheduling(index, nowUtc);
 			continue;
 		}
 
@@ -402,7 +436,10 @@ void SchedulerCore::dispatchOne(
 	if (!record.occupied || record.canceled || record.paused) {
 		return;
 	}
-	const DateTime currentDue = record.nextRunUtc;
+	const bool moonEvent = isMoonEventSchedule(record.schedule);
+	const DateTime occurrence = moonEvent ? record.moonEventDueUtc : record.nextRunUtc;
+	const int64_t nextInterval = moonEvent ? 1 : 60;
+	const bool oneShot = record.schedule.isOneShot || record.schedule.kind == ScheduleKind::OneShotUtc;
 
 	JobInvocation invocation{};
 	invocation.jobId = record.id;
@@ -424,9 +461,9 @@ void SchedulerCore::dispatchOne(
 			return;
 		}
 		record.runningCount++;
-		if (record.schedule.isOneShot || record.schedule.kind == ScheduleKind::OneShotUtc) {
+		if (oneShot) {
 			record.hasNext = false;
-		} else if (computeNextForJob(record, date_.addMinutes(currentDue, 1))) {
+		} else if (computeNextForJob(record, date_.addSeconds(occurrence, nextInterval))) {
 			if (!pushDue(slotIndex, record)) {
 				record.hasNext = false;
 			}
@@ -435,12 +472,18 @@ void SchedulerCore::dispatchOne(
 		}
 		if (!executor->submit(invocation)) {
 			record.runningCount--;
+			if (moonEvent) {
+				record.moonEventDueUtc = occurrence;
+			}
 			record.hasNext = true;
 			record.nextRunUtc = date_.addSeconds(nowUtc, kRetryDelaySeconds);
 			if (!pushDue(slotIndex, record)) {
 				record.hasNext = false;
 			}
 			return;
+		}
+		if (moonEvent) {
+			record.lastDispatchedMoonEpoch = occurrence.epochSeconds;
 		}
 		handleCompletion(slotIndex, nowUtc, executors);
 		return;
@@ -475,22 +518,16 @@ void SchedulerCore::dispatchOne(
 	}
 
 	record.runningCount++;
-	if (deferred || record.schedule.isOneShot || record.schedule.kind == ScheduleKind::OneShotUtc) {
+	if (moonEvent) {
+		record.lastDispatchedMoonEpoch = occurrence.epochSeconds;
+	}
+	if (deferred || oneShot) {
 		record.hasNext = false;
 		return;
 	}
-	if (record.overlap == OverlapPolicy::AllowParallel) {
-		if (computeNextForJob(record, date_.addMinutes(currentDue, 1))) {
-			if (!pushDue(slotIndex, record)) {
-				record.hasNext = false;
-			}
-		}
-		return;
-	}
-	if (computeNextForJob(record, date_.addMinutes(currentDue, 1))) {
-		if (!pushDue(slotIndex, record)) {
-			record.hasNext = false;
-		}
+	if (computeNextForJob(record, date_.addSeconds(occurrence, nextInterval)) &&
+	    !pushDue(slotIndex, record)) {
+		record.hasNext = false;
 	}
 }
 
@@ -556,6 +593,11 @@ void SchedulerCore::dispatchDue(const DateTime &nowUtc, IExecutorResolver &execu
 	if (!clockValid(nowUtc)) {
 		return;
 	}
+	const uint32_t currentRevision = date_.locationRevision();
+	if (locationRevision_ != currentRevision) {
+		locationRevision_ = currentRevision;
+		(void)refreshSchedules(nowUtc, true);
+	}
 	drainPendingSchedules(nowUtc);
 	pruneInvalidDueEntries();
 	while (!dueHeap_.empty()) {
@@ -607,6 +649,17 @@ bool SchedulerCore::nextDueEpoch(int64_t &outEpochSeconds) {
 	}
 	outEpochSeconds = dueHeap_.top().nextEpoch;
 	return true;
+}
+
+bool SchedulerCore::hasActiveMoonEventJobs() const {
+	for (size_t index = 0; index < jobs_.size(); ++index) {
+		const JobRecord &record = jobs_[index];
+		if (record.occupied && !record.canceled && !record.paused &&
+		    isMoonEventSchedule(record.schedule)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 size_t SchedulerCore::activeInvocationCount() const {

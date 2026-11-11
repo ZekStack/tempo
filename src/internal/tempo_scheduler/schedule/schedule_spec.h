@@ -11,6 +11,8 @@ enum class ScheduleKind : uint8_t {
 	Sunset,
 	MoonPhaseAngle,
 	MoonIlluminationPercent,
+	Moonrise,
+	Moonset,
 };
 
 enum class MoonPhaseName : uint8_t {
@@ -40,6 +42,7 @@ struct TempoSchedule {
 	int moonPhaseToleranceDegrees = 1;
 	double moonIlluminationTargetPercent = 0.0;
 	double moonIlluminationTolerancePercent = 0.5;
+	int moonOffsetMinutes = 0;
 
 	static TempoSchedule onceUtc(const DateTime &whenUtc);
 	static TempoSchedule everyMinutes(int minutes);
@@ -54,6 +57,10 @@ struct TempoSchedule {
 	static TempoSchedule sunSet(const TempoDuration &offset = TempoDuration{});
 	static TempoSchedule sunrise(int offsetMinutes = 0);
 	static TempoSchedule sunset(int offsetMinutes = 0);
+	static TempoSchedule moonRise(const TempoDuration &offset = TempoDuration{});
+	static TempoSchedule moonSet(const TempoDuration &offset = TempoDuration{});
+	static TempoSchedule moonrise(int offsetMinutes = 0);
+	static TempoSchedule moonset(int offsetMinutes = 0);
 	static TempoSchedule moonIllumination(double percent, double tolerancePercent = 0.5);
 	static TempoSchedule moonPhaseAngle(int angleDegrees, int toleranceDegrees = 1);
 	static TempoSchedule moonPhase(MoonPhaseName name, int toleranceDegrees = 1);

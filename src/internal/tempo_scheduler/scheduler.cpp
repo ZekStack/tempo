@@ -540,6 +540,34 @@ SchedulerResult<uint32_t> TempoScheduler::everySunSet(
 	return schedule(TempoSchedule::sunSet(offset), options, std::move(callback));
 }
 
+SchedulerResult<uint32_t> TempoScheduler::everyMoonRise(
+    const char *name, SchedulerFunctionNoData callback
+) {
+	return everyMoonRise(name, TempoDuration{}, std::move(callback));
+}
+
+SchedulerResult<uint32_t> TempoScheduler::everyMoonRise(
+    const char *name, const TempoDuration &offset, SchedulerFunctionNoData callback
+) {
+	SchedulerJobOptions options;
+	options.name = name;
+	return schedule(TempoSchedule::moonRise(offset), options, std::move(callback));
+}
+
+SchedulerResult<uint32_t> TempoScheduler::everyMoonSet(
+    const char *name, SchedulerFunctionNoData callback
+) {
+	return everyMoonSet(name, TempoDuration{}, std::move(callback));
+}
+
+SchedulerResult<uint32_t> TempoScheduler::everyMoonSet(
+    const char *name, const TempoDuration &offset, SchedulerFunctionNoData callback
+) {
+	SchedulerJobOptions options;
+	options.name = name;
+	return schedule(TempoSchedule::moonSet(offset), options, std::move(callback));
+}
+
 SchedulerResult<uint32_t> TempoScheduler::atDays(
     uint8_t dowMask, int hour, int minute, const char *name, SchedulerFunctionNoData callback
 ) {

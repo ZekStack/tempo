@@ -2,6 +2,7 @@
 
 #include "date_allocator.h"
 #include <Arduino.h>
+#include <array>
 #include <functional>
 #include <initializer_list>
 #include <limits>
@@ -114,6 +115,37 @@ struct TempoSunPosition {
 	double elevationDegrees = 0.0;
 	bool isAboveHorizon = false;
 };
+enum class TempoMoonEventType : uint8_t { Rise, Set };
+
+struct TempoMoonEvent {
+	TempoMoonEventType type = TempoMoonEventType::Rise;
+	DateTime utc{};
+};
+
+struct TempoMoonEventResult {
+	bool found = false;
+	DateTime utc{};
+};
+
+struct TempoMoonCycle {
+	bool valid = false;
+	LocalDateTime calculatedForLocalDate{};
+	std::array<TempoMoonEvent, 8> events{};
+	uint8_t eventCount = 0;
+	bool alwaysAboveHorizon = false;
+	bool alwaysBelowHorizon = false;
+
+	TempoMoonEventResult firstEvent(TempoMoonEventType type) const;
+};
+
+struct TempoMoonPosition {
+	bool ok = false;
+	double azimuthDegrees = 0.0;
+	double elevationDegrees = 0.0;
+	double distanceKm = 0.0;
+	bool isAboveHorizon = false;
+};
+
 struct TempoSunCycle {
 	DateTime calculatedForDateUtc{};
 	LocalDateTime calculatedForLocalDate{};
@@ -297,12 +329,25 @@ class Tempo {
 	bool isDstActive(const DateTime &dt) const;
 	bool isDstActive(const char *timeZone) const;
 	bool isDstActive(const DateTime &dt, const char *timeZone) const;
+	// Lunar events for the current local day (cached), or the local day containing atUtc.
+	TempoMoonCycle moonCycleToday();
+	TempoMoonCycle moonCycle(const DateTime &atUtc) const;
+	// Topocentric geometric centre, with an apparent upper-limb horizon flag.
+	TempoMoonPosition moonPosition() const;
+	TempoMoonPosition moonPosition(const DateTime &atUtc) const;
+	TempoMoonPosition moonPosition(float latitude, float longitude, const DateTime &atUtc) const;
 	TempoMoonPhase moonPhase() const;
 	TempoMoonPhase moonPhase(const DateTime &dt) const;
 	const char *monthName(int month) const;
 	const char *monthName(const DateTime &dt) const;
 
   private:
+	friend class ScheduleCalculator;
+	friend class SchedulerCore;
+	TempoMoonPosition moonPositionAt(const DateTime &atUtc, bool requireValidClock) const;
+	TempoMoonCycle moonCycleFor(const DateTime &atUtc, bool useCache) const;
+	bool nextMoonEvent(TempoMoonEventType type, const DateTime &fromUtc, DateTime &out) const;
+	uint32_t locationRevision() const;
 #if defined(__has_include)
 #if __has_include(<esp_sntp.h>)
 	static void handleSntpSync(struct timeval *tv);
@@ -346,6 +391,9 @@ class Tempo {
 	uint32_t sunCycleMatchWindowSeconds_ = 60;
 	mutable std::recursive_mutex sunCycleMutex_{};
 	TempoSunCycle sunCycleCache_{};
+	mutable TempoMoonCycle moonCycleCache_{};
+	mutable std::array<std::pair<int64_t, int64_t>, 4> moonCycleCacheSpans_{};
+	uint32_t locationRevision_ = 0;
 
   public:
 	void _testDispatchNtpSync(const DateTime &syncedAtUtc) { dispatchNtpSync(syncedAtUtc); }

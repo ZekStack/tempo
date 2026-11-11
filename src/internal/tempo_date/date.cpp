@@ -247,6 +247,8 @@ void Tempo::deinit() {
 	}
 	usePSRAMBuffers_ = false;
 	initialized_ = false;
+	moonCycleCache_.valid = false;
+	++locationRevision_;
 
 	if (activeNtpSyncOwner_ == this) {
 		activeNtpSyncOwner_ = nullptr;
@@ -266,6 +268,8 @@ void Tempo::applyConfig(const TempoConfig &config) {
 	minValidUnixSeconds_ = config.minValidUnixSeconds;
 	sunCycleMatchWindowSeconds_ = config.sunCycleMatchWindowSeconds;
 	sunCycleCache_ = TempoSunCycle{};
+	moonCycleCache_.valid = false;
+	++locationRevision_;
 	timeZone_ = DateString(DateAllocator<char>(usePSRAMBuffers_));
 	for (size_t i = 0; i < kMaxNtpServers; ++i) {
 		ntpServers_[i] = DateString(DateAllocator<char>(usePSRAMBuffers_));
@@ -507,6 +511,7 @@ LocalDateTime Tempo::toLocal(const DateTime &dt) const {
 }
 
 LocalDateTime Tempo::toLocal(const DateTime &dt, const char *timeZone) const {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
 	LocalDateTime result{};
 	const char *tz = timeZone;
 	if (!tz || tz[0] == '\0') {
@@ -900,6 +905,7 @@ int Tempo::getWeekdayUtc(const DateTime &dt) const {
 }
 
 DateTime Tempo::startOfDayLocal(const DateTime &dt) const {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
 	Utils::ScopedTz scopedTimeZone(
 	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
 	);
@@ -1288,6 +1294,7 @@ Tempo::ParseResult Tempo::parseIso8601Utc(const char *str) const {
 }
 
 Tempo::ParseResult Tempo::parseDateTimeLocal(const char *str) const {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
 	Utils::ScopedTz scopedTimeZone(
 	    timeZone_.empty() ? nullptr : timeZone_.c_str(), usePSRAMBuffers_
 	);

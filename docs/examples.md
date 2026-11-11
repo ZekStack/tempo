@@ -7,10 +7,10 @@ Tempo examples are topic-focused Arduino sketches.
 | `BasicClock` | Minimal initialization and UTC/local formatting. |
 | `NtpAndCallbacks` | NTP configuration and bindable callbacks. |
 | `LocalTimeAndDst` | DST-aware conversion and local-day checks. |
-| `SunMoon` | Cached sunrise/sunset and moon phase. |
+| `SunMoon` | Sun and Moon cycles, topocentric lunar position, and phase. |
 | `SchedulerBasic` | Interval and daily scheduler calls. |
 | `SchedulerCronAndDays` | Cron parser and weekday masks. |
-| `SchedulerSunCycle` | Sunrise/sunset jobs with offsets. |
+| `SchedulerSunCycle` | Solar and lunar horizon jobs with offsets. |
 | `SchedulerExecutionModes` | Inline, worker pool, and dedicated-task execution. |
 
 Compile an example with PlatformIO CI:

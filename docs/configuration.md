@@ -16,7 +16,7 @@ config.usePSRAMBuffers = false;
 
 ## Location
 
-Latitude and longitude are optional. Leave both unset when sun calculations are not needed. When a stored location is configured, both values must be finite and within these ranges:
+Latitude and longitude are optional. Leave both unset when solar and lunar horizon calculations are not needed. When a stored location is configured, both values must be finite and within these ranges:
 
 - latitude: `-90` through `90`;
 - longitude: `-180` through `180`.
@@ -38,6 +38,10 @@ The underlying C runtime timezone is process-global. Tempo serializes local-time
 Sun cycles are calculated lazily and cached by local calendar date. `sunCycleToday()` refreshes the cache when the local date changes. APIs that receive a `DateTime`, such as `isDay(date)` and `isSunRise(date)`, calculate against the supplied date rather than reusing an unrelated daily cache entry.
 
 `sunCycleMatchWindowSeconds` controls the tolerance used by `isSunRise()` and `isSunSet()`.
+
+## Moon cycle
+
+Moonrise, moonset, and lunar position share the configured coordinates and need no network or scheduler. `moonCycleToday()` uses the configured timezone and the current valid-clock threshold. The daily cache is cleared on location or timezone changes.
 
 ## Scheduler
 

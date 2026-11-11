@@ -4,6 +4,7 @@
 #include "date_allocator.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <limits>
 #include <mutex>
@@ -32,6 +33,9 @@ class TempoUtils {
 			}
 
 			const char *current = std::getenv("TZ");
+			if (current && std::strcmp(current, tz) == 0) {
+				return;
+			}
 			if (current) {
 				hadPrevious_ = true;
 				previous_ = current;

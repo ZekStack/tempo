@@ -1,8 +1,10 @@
 #include "schedule_spec.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 
 namespace {
@@ -210,6 +212,32 @@ TempoSchedule TempoSchedule::sunset(int offsetMinutes) {
 
 TempoSchedule TempoSchedule::sunSet(const TempoDuration &offset) {
 	return sunset(static_cast<int>(offset.seconds() / 60));
+}
+
+TempoSchedule TempoSchedule::moonrise(int offsetMinutes) {
+	TempoSchedule spec;
+	spec.kind = ScheduleKind::Moonrise;
+	spec.moonOffsetMinutes = offsetMinutes;
+	return spec;
+}
+
+TempoSchedule TempoSchedule::moonset(int offsetMinutes) {
+	TempoSchedule spec = moonrise(offsetMinutes);
+	spec.kind = ScheduleKind::Moonset;
+	return spec;
+}
+
+TempoSchedule TempoSchedule::moonRise(const TempoDuration &offset) {
+	const int64_t minutes = offset.seconds() / 60;
+	return moonrise(static_cast<int>(std::clamp<int64_t>(
+	    minutes, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()
+	)));
+}
+
+TempoSchedule TempoSchedule::moonSet(const TempoDuration &offset) {
+	TempoSchedule spec = moonRise(offset);
+	spec.kind = ScheduleKind::Moonset;
+	return spec;
 }
 
 TempoSchedule TempoSchedule::cron(const char *expression) {
