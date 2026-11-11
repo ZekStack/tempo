@@ -277,6 +277,88 @@ void testLunarDispatchAcrossRefreshAndRetry(SchedulerJobMode mode) {
 	expect(runs == 2, "a cancelled lunar job should stay cancelled");
 }
 
+void testLunarRejectedRetrySurvivesClockRefresh(SchedulerJobMode mode) {
+	Tempo tempo;
+	initTempo(tempo);
+	expect(static_cast<bool>(tempo.updateLocation(69.6492f, 18.9553f, kBudapestTz)),
+	       "retry refresh test location should configure");
+	const DateTime fromUtc = tempo.fromLocal(2025, 6, 20);
+	const auto cycle = tempo.moonCycle(fromUtc);
+	expect(cycle.valid && cycle.eventCount == 3,
+	       "retry refresh test requires two moonrises");
+	const DateTime first = cycle.events[0].utc;
+	const DateTime second = cycle.events[2].utc;
+
+	SchedulerCore core(tempo, fromUtc.epochSeconds);
+	RecordingExecutor executor(true);
+	TestExecutorResolver executors(&executor, &executor);
+	SchedulerJobOptions options;
+	options.mode = mode;
+	options.overlap = OverlapPolicy::AllowParallel;
+	int runs = 0;
+	const auto job = core.addJob(TempoSchedule::moonrise(), options, callbackFor(runs), fromUtc);
+	expect(job.ok(), "lunar retry refresh job should be accepted");
+
+	executor.setMaxAcceptedPerRound(0);
+	core.dispatchDue(first, executors);
+	JobInfo info{};
+	const DateTime retry = tempo.addSeconds(first, 1);
+	expect(runs == 0 && core.getJobInfo(job.value, info).ok() &&
+	           tempo.isEqual(info.nextRunUtc, retry),
+	       "rejected lunar occurrence should be queued for retry");
+
+	// An NTP/day refresh, including a rollback, must not replace this retry
+	// with the following astronomical occurrence.
+	expect(core.refreshAllSchedules(first).ok() &&
+	           core.refreshAllSchedules(tempo.subMinutes(first, 30)).ok(),
+	       "clock-context refreshes should succeed while a retry is pending");
+	expect(core.getJobInfo(job.value, info).ok() && info.hasNext &&
+	           tempo.isEqual(info.nextRunUtc, retry),
+	       "clock refresh must preserve the original rejected occurrence");
+
+	executor.setMaxAcceptedPerRound(1);
+	core.dispatchDue(retry, executors);
+	expect(runs == 1 && core.getJobInfo(job.value, info).ok() &&
+	           tempo.isEqual(info.nextRunUtc, second),
+	       "pending occurrence should dispatch once and advance to the next moonrise");
+	expect(core.refreshAllSchedules(first).ok(),
+	       "rollback refresh after successful submission should succeed");
+	core.dispatchDue(first, executors);
+	expect(runs == 1, "accepted lunar occurrence must not replay after rollback");
+}
+
+void testLunarRejectedRetryInvalidatedByLocationChange() {
+	Tempo tempo;
+	initTempo(tempo);
+	expect(static_cast<bool>(tempo.updateLocation(69.6492f, 18.9553f, kBudapestTz)),
+	       "location invalidation test should configure");
+	const DateTime fromUtc = tempo.fromLocal(2025, 6, 20);
+	const DateTime first = tempo.moonCycle(fromUtc).events[0].utc;
+	SchedulerCore core(tempo, fromUtc.epochSeconds);
+	RecordingExecutor executor(true);
+	TestExecutorResolver executors(&executor, &executor);
+	SchedulerJobOptions options;
+	options.mode = SchedulerJobMode::Inline;
+	int runs = 0;
+	const auto job = core.addJob(TempoSchedule::moonrise(), options, callbackFor(runs), fromUtc);
+	expect(job.ok(), "location invalidation job should be accepted");
+	executor.setMaxAcceptedPerRound(0);
+	core.dispatchDue(first, executors);
+
+	expect(static_cast<bool>(tempo.updateLocation(47.4979f, 19.0402f, kBudapestTz)),
+	       "location update should invalidate stale lunar event");
+	DateTime expected{};
+	const DateTime retry = tempo.addSeconds(first, 1);
+	expect(ScheduleCalculator::computeNext(tempo, TempoSchedule::moonrise(), retry, expected),
+	       "new location should have a subsequent moonrise");
+	executor.setMaxAcceptedPerRound(1);
+	core.dispatchDue(retry, executors);
+	JobInfo info{};
+	expect(runs == 0 && core.getJobInfo(job.value, info).ok() &&
+	           tempo.isEqual(info.nextRunUtc, expected),
+	       "location update must discard a retry computed for the old coordinates");
+}
+
 void testLunarScheduleLocationChanges() {
 	Tempo tempo;
 	initTempo(tempo);
@@ -368,6 +450,9 @@ int main() {
 	testCompletionPublicationRetriesUntilAccepted();
 	testLunarDispatchAcrossRefreshAndRetry(SchedulerJobMode::Inline);
 	testLunarDispatchAcrossRefreshAndRetry(SchedulerJobMode::WorkerPool);
+	testLunarRejectedRetrySurvivesClockRefresh(SchedulerJobMode::Inline);
+	testLunarRejectedRetrySurvivesClockRefresh(SchedulerJobMode::WorkerPool);
+	testLunarRejectedRetryInvalidatedByLocationChange();
 	testLunarScheduleLocationChanges();
 
 	if (failures != 0) {

@@ -29,6 +29,8 @@ struct JobRecord {
 	DateTime scheduleFromUtc{};
 	// Retry wake times can differ from the astronomical occurrence.
 	DateTime moonEventDueUtc{};
+	// A rejected lunar invocation must survive clock/context refreshes.
+	bool moonRetryPending = false;
 	int64_t lastDispatchedMoonEpoch = std::numeric_limits<int64_t>::min();
 	CallbackRef callback{};
 	SchedulerOwnedString name{};

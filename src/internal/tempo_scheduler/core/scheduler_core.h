@@ -42,7 +42,7 @@ class SchedulerCore {
 
   private:
 	SchedulerResult<size_t> findJobSlot(uint32_t jobId) const;
-	SchedulerResult<void> refreshSchedules(const DateTime &nowUtc, bool moonEventsOnly);
+	SchedulerResult<void> refreshSchedules(const DateTime &nowUtc, bool moonEventsOnly, bool locationChanged);
 	bool computeNextForJob(JobRecord &record, const DateTime &fromUtc);
 	bool pushDue(size_t slotIndex, const JobRecord &record);
 	bool queueScheduling(size_t slotIndex, const DateTime &fromUtc);

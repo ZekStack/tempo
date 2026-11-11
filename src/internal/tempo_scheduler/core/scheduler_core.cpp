@@ -116,6 +116,7 @@ void SchedulerCore::clearScheduling(size_t slotIndex) {
 	record.pendingSchedule = false;
 	record.hasNext = false;
 	record.refreshPending = false;
+	record.moonRetryPending = false;
 }
 
 void SchedulerCore::drainPendingSchedules(const DateTime &nowUtc) {
@@ -175,6 +176,7 @@ void SchedulerCore::retireJob(size_t slotIndex) {
 	record.hasNext = false;
 	record.pendingSchedule = false;
 	record.refreshPending = false;
+	record.moonRetryPending = false;
 	record.runningCount = 0;
 	record.callback = makeEmptyCallback();
 	record.name.clear();
@@ -343,12 +345,15 @@ SchedulerResult<void> SchedulerCore::cancelAll() {
 }
 
 SchedulerResult<void> SchedulerCore::refreshAllSchedules(const DateTime &nowUtc) {
-	locationRevision_ = date_.locationRevision();
-	return refreshSchedules(nowUtc, false);
+	const uint32_t revision = date_.locationRevision();
+	const bool locationChanged = locationRevision_ != revision;
+	locationRevision_ = revision;
+	return refreshSchedules(nowUtc, false, locationChanged);
 }
 
-SchedulerResult<void>
-SchedulerCore::refreshSchedules(const DateTime &nowUtc, bool moonEventsOnly) {
+SchedulerResult<void> SchedulerCore::refreshSchedules(
+    const DateTime &nowUtc, bool moonEventsOnly, bool locationChanged
+) {
 	for (size_t index = 0; index < jobs_.size(); ++index) {
 		JobRecord &record = jobs_[index];
 		if (!record.occupied || record.canceled || record.paused) {
@@ -359,9 +364,19 @@ SchedulerCore::refreshSchedules(const DateTime &nowUtc, bool moonEventsOnly) {
 			continue;
 		}
 
-		if (isMoonEventSchedule(record.schedule) && !clockValid(nowUtc)) {
-			(void)queueScheduling(index, nowUtc);
-			continue;
+		if (isMoonEventSchedule(record.schedule)) {
+			if (locationChanged) {
+				// The occurrence was calculated for a different observation site.
+				record.moonRetryPending = false;
+			} else if (record.moonRetryPending && record.hasNext) {
+				// A clock/day refresh must not replace an unaccepted occurrence.
+				// Its retry is already in the due heap.
+				continue;
+			}
+			if (!clockValid(nowUtc)) {
+				(void)queueScheduling(index, nowUtc);
+				continue;
+			}
 		}
 
 		record.pendingSchedule = false;
@@ -453,6 +468,9 @@ void SchedulerCore::dispatchOne(
 	if (record.mode == SchedulerJobMode::Inline) {
 		ISchedulerExecutor *executor = executors.inlineExecutor();
 		if (!executor) {
+			if (moonEvent) {
+				record.moonRetryPending = true;
+			}
 			record.hasNext = true;
 			record.nextRunUtc = date_.addSeconds(nowUtc, kRetryDelaySeconds);
 			if (!pushDue(slotIndex, record)) {
@@ -474,6 +492,7 @@ void SchedulerCore::dispatchOne(
 			record.runningCount--;
 			if (moonEvent) {
 				record.moonEventDueUtc = occurrence;
+				record.moonRetryPending = true;
 			}
 			record.hasNext = true;
 			record.nextRunUtc = date_.addSeconds(nowUtc, kRetryDelaySeconds);
@@ -483,6 +502,7 @@ void SchedulerCore::dispatchOne(
 			return;
 		}
 		if (moonEvent) {
+			record.moonRetryPending = false;
 			record.lastDispatchedMoonEpoch = occurrence.epochSeconds;
 		}
 		handleCompletion(slotIndex, nowUtc, executors);
@@ -491,6 +511,9 @@ void SchedulerCore::dispatchOne(
 
 	ISchedulerExecutor *executor = executors.executorFor(record.executorId);
 	if (!executor) {
+		if (moonEvent) {
+			record.moonRetryPending = true;
+		}
 		record.hasNext = true;
 		record.nextRunUtc = date_.addSeconds(nowUtc, kRetryDelaySeconds);
 		if (!pushDue(slotIndex, record)) {
@@ -500,6 +523,9 @@ void SchedulerCore::dispatchOne(
 	}
 
 	if (record.hasDedicatedTaskOptions && record.executorId != 1) {
+		if (moonEvent) {
+			record.moonRetryPending = true;
+		}
 		record.hasNext = true;
 		record.nextRunUtc = date_.addSeconds(nowUtc, kRetryDelaySeconds);
 		if (!pushDue(slotIndex, record)) {
@@ -509,6 +535,9 @@ void SchedulerCore::dispatchOne(
 	}
 
 	if (!executor->submit(invocation)) {
+		if (moonEvent) {
+			record.moonRetryPending = true;
+		}
 		record.hasNext = true;
 		record.nextRunUtc = date_.addSeconds(nowUtc, kRetryDelaySeconds);
 		if (!pushDue(slotIndex, record)) {
@@ -519,6 +548,7 @@ void SchedulerCore::dispatchOne(
 
 	record.runningCount++;
 	if (moonEvent) {
+		record.moonRetryPending = false;
 		record.lastDispatchedMoonEpoch = occurrence.epochSeconds;
 	}
 	if (deferred || oneShot) {
@@ -596,7 +626,7 @@ void SchedulerCore::dispatchDue(const DateTime &nowUtc, IExecutorResolver &execu
 	const uint32_t currentRevision = date_.locationRevision();
 	if (locationRevision_ != currentRevision) {
 		locationRevision_ = currentRevision;
-		(void)refreshSchedules(nowUtc, true);
+		(void)refreshSchedules(nowUtc, true, true);
 	}
 	drainPendingSchedules(nowUtc);
 	pruneInvalidDueEntries();
