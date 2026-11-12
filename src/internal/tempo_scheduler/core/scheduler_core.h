@@ -37,10 +37,12 @@ class SchedulerCore {
 	handleEvent(const SchedulerEvent &event, const DateTime &nowUtc, IExecutorResolver &executors);
 
 	bool nextDueEpoch(int64_t &outEpochSeconds);
+	bool hasActiveMoonEventJobs() const;
 	size_t activeInvocationCount() const;
 
   private:
 	SchedulerResult<size_t> findJobSlot(uint32_t jobId) const;
+	SchedulerResult<void> refreshSchedules(const DateTime &nowUtc, bool moonEventsOnly, bool locationChanged);
 	bool computeNextForJob(JobRecord &record, const DateTime &fromUtc);
 	bool pushDue(size_t slotIndex, const JobRecord &record);
 	bool queueScheduling(size_t slotIndex, const DateTime &fromUtc);
@@ -62,6 +64,7 @@ class SchedulerCore {
 	int64_t minValidEpochSeconds_ = 0;
 	Strata::Placement allocationPlacement_ = Strata::Placement::PreferExternal;
 	uint32_t nextId_ = 1;
+	uint32_t locationRevision_;
 	SchedulerArray<JobRecord> jobs_{};
 	SchedulerArray<size_t> freeSlots_{};
 	SchedulerArray<size_t> pendingSchedules_{};

@@ -31,6 +31,13 @@ TempoResult Tempo::updateLocation(
 	hasLocation_ = true;
 	timeZone_ = timeZone;
 	sunCycleCache_ = TempoSunCycle{};
+	moonCycleCache_.valid = false;
+	++locationRevision_;
 	TempoUtils::setProcessTimeZone(timeZone_.c_str());
 	return TempoResult::success("tempo location updated");
+}
+
+uint32_t Tempo::locationRevision() const {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
+	return locationRevision_;
 }

@@ -11,7 +11,6 @@ void setup() {
 	tempoConfig.timezone = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 	tempoConfig.latitude = 47.4979f;
 	tempoConfig.longitude = 19.0402f;
-	tempoConfig.minValidUnixSeconds = 0;
 	tempo.init(tempoConfig);
 	scheduler.init(tempo);
 
@@ -20,6 +19,12 @@ void setup() {
 	});
 	scheduler.everySunSet("sunset-offset", TempoDuration::minutes(30), []() {
 		Serial.println("sunset + 30 minutes");
+	});
+	scheduler.everyMoonRise("before-moonrise", TempoDuration::minutes(-20), []() {
+		Serial.println("moonrise - 20 minutes");
+	});
+	scheduler.everyMoonSet("moonset", []() {
+		Serial.println("moonset job");
 	});
 }
 

@@ -1,10 +1,10 @@
 # Tempo
 
-> Current version: **v0.3.0**. Strata is pinned to **v0.1.4**.
+> Current version: **v0.3.1**. Strata is pinned to **v0.1.4**.
 
 Tempo is a time, calendar, sun, moon, and scheduling toolkit for ESP32.
 
-Tempo helps you keep UTC-first time logic explicit in Arduino ESP32 projects while still providing timezone-aware local conversion, DST-aware calendar helpers, cached sun cycle data, moon phase data, and scheduled job execution.
+Tempo helps you keep UTC-first time logic explicit in Arduino ESP32 projects while still providing timezone-aware local conversion, DST-aware calendar helpers, cached sun and moon cycles, astronomical positions, moon phase data, and scheduled job execution.
 
 [![CI](https://github.com/ZekStack/tempo/actions/workflows/ci.yml/badge.svg)](https://github.com/ZekStack/tempo/actions/workflows/ci.yml)
 [![Host Tests](https://github.com/ZekStack/tempo/actions/workflows/host-tests.yml/badge.svg)](https://github.com/ZekStack/tempo/actions/workflows/host-tests.yml)
@@ -17,12 +17,12 @@ Tempo helps you keep UTC-first time logic explicit in Arduino ESP32 projects whi
 * **DST-aware** - POSIX timezone strings are used for local time and recurring schedules.
 * **ESP32-friendly** - Strata-backed FreeRTOS service tasks, queues, synchronization, and result-based errors.
 * **PSRAM-first** - Tempo `0.2.1` defaults movable allocations and task stacks to `Strata::Placement::PreferExternal`.
-* **Sun and moon data** - sunrise, sunset, solar noon, on-demand solar azimuth/elevation, daylight checks, moon angle, and illumination.
+* **Sun and moon data** - sunrise, sunset, solar noon, on-demand solar and lunar azimuth/elevation, daylight checks, moonrise, moonset, moon angle, and illumination.
 * **Production-minded** - no explicit exception-based control flow, bindable callbacks, and C++20 with embedded constraints.
 
 ## Install
 
-Tempo `0.3.0` requires Strata `v0.1.4`.
+Tempo `0.3.1` requires Strata `v0.1.4`.
 
 ### PlatformIO
 
@@ -33,7 +33,7 @@ board = esp32dev
 framework = arduino
 
 lib_deps =
-  https://github.com/ZekStack/tempo.git#v0.3.0
+  https://github.com/ZekStack/tempo.git#v0.3.1
   https://github.com/ZekStack/strata.git#v0.1.4
 
 build_flags =
@@ -109,9 +109,10 @@ Tempo-owned date/configuration text buffers also prefer external memory by defau
 > Recurring scheduler jobs wait for valid wall-clock time. Set `minValidUnixSeconds` for your product so jobs do not run against an unset clock.
 
 * Tempo uses POSIX timezone strings for DST-aware local conversion. Local timezone operations are serialized because the C runtime timezone is process-global.
-* Latitude and longitude are optional, but both must be configured together before using stored-location sun APIs.
+* Latitude and longitude are optional, but both must be configured together before using stored-location sun or lunar horizon APIs.
 * `sunCycleToday()` lazily calculates and caches the current local date. Date-taking daylight and sunrise/sunset match APIs calculate against the supplied date.
 * `sunPosition()` and its explicit UTC overloads compute geometric solar azimuth/elevation on demand without a cache or background task; callers decide their update cadence.
+* `moonCycleToday()` caches ordered moonrise and moonset events for the local date. `moonCycle(atUtc)` and `moonPosition(atUtc)` can calculate offline for an explicit UTC instant.
 * One-shot UTC schedules remain exact; recurring schedules evaluate in local time.
 * Scheduler control calls made from an inline scheduler callback return `SchedulerError::Busy` rather than waiting on the scheduler service task itself.
 * Strata-owned tasks never self-delete. Tempo hands completed task ownership back to another task before releasing the task stack and control block.
@@ -123,10 +124,10 @@ Tempo-owned date/configuration text buffers also prefer external memory by defau
 | `BasicClock` | Initialize Tempo and print UTC/local time. |
 | `NtpAndCallbacks` | Configure NTP and sync callbacks. |
 | `LocalTimeAndDst` | UTC/local conversion and DST checks. |
-| `SunMoon` | Cached sun cycle and moon phase calls. |
+| `SunMoon` | Sun and Moon cycles, lunar position, and phase. |
 | `SchedulerBasic` | Simple interval and daily jobs. |
 | `SchedulerCronAndDays` | Cron expressions and weekday masks. |
-| `SchedulerSunCycle` | Sunrise/sunset scheduled jobs. |
+| `SchedulerSunCycle` | Solar and lunar horizon jobs with offsets. |
 | `SchedulerExecutionModes` | Inline, worker pool, and dedicated-task modes. |
 
 Start with:
@@ -155,7 +156,9 @@ LocalDateTime localNow = tempo.nowLocal();
 DateTime utc = tempo.toUtc(localNow);
 
 TempoSunCycle sun = tempo.sunCycleToday();
-TempoMoonPhase moon = tempo.moonPhase();
+TempoMoonPhase phase = tempo.moonPhase();
+TempoMoonCycle moon = tempo.moonCycleToday();
+TempoMoonPosition moonPosition = tempo.moonPosition();
 TempoSunPosition sunPosition = tempo.sunPosition();
 
 SchedulerJobOptions options;
@@ -175,7 +178,7 @@ scheduler.schedule(TempoSchedule::dailyAt(8, 30), options, []() {});
 | Memory policy | `PreferExternal` by default for movable storage and task stacks |
 | Dependencies | Strata `v0.1.4` |
 | Exceptions | Not used for public error handling |
-| Status | `0.3.0` |
+| Status | `0.3.1` |
 
 ## License
 

@@ -25,6 +25,7 @@ DATE_SCHEDULE_SOURCES=(
   "${ROOT_DIR}/src/internal/tempo_date/location.cpp"
   "${ROOT_DIR}/src/internal/tempo_date/sun.cpp"
   "${ROOT_DIR}/src/internal/tempo_date/moon.cpp"
+  "${ROOT_DIR}/src/internal/tempo_date/lunar_position.cpp"
   "${ROOT_DIR}/src/internal/tempo_scheduler/schedule/schedule_field.cpp"
   "${ROOT_DIR}/src/internal/tempo_scheduler/schedule/schedule_spec.cpp"
   "${ROOT_DIR}/src/internal/tempo_scheduler/schedule/schedule_calculator.cpp"
@@ -43,7 +44,16 @@ DATE_SCHEDULE_SOURCES=(
   "${ROOT_DIR}/tests/host/test_scheduler_core.cpp" \
   -o "${BUILD_DIR}/tempo-scheduler-tests"
 
+"${CXX}" \
+  "${CXX_FLAGS[@]}" \
+  "${DATE_SCHEDULE_SOURCES[@]}" \
+  "${ROOT_DIR}/tests/host/test_lunar.cpp" \
+  -Wl,--wrap=time \
+  -o "${BUILD_DIR}/tempo-lunar-tests"
+
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 \
   "${BUILD_DIR}/tempo-date-schedule-tests"
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 \
   "${BUILD_DIR}/tempo-scheduler-tests"
+ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 \
+  "${BUILD_DIR}/tempo-lunar-tests"

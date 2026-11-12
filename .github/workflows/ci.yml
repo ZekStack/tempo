@@ -214,16 +214,8 @@ jobs:
         with:
           version: ${{ env.ARDUINO_CLI_VERSION }}
 
-      - name: Cache Arduino CLI packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.arduino15
-            ~/.cache/arduino
-          key: ${{ runner.os }}-arduino-cli-${{ env.ARDUINO_CLI_VERSION }}-esp32-${{ env.ESP32_CORE_VERSION }}
-          restore-keys: |
-            ${{ runner.os }}-arduino-cli-${{ env.ARDUINO_CLI_VERSION }}-esp32-
-
+      # Self-hosted runners retain their Arduino installation locally.
+      # Remote caching bundles several gigabytes and can stall job startup.
       - name: Install ESP32 core
         run: |
           arduino-cli core update-index
@@ -247,7 +239,9 @@ jobs:
           set -e
           for d in examples/*; do
             if [ -d "$d" ]; then
+              echo "Building ${d} on ${FQBN}"
               arduino-cli compile \
+                --jobs 2 \
                 --fqbn "$FQBN" \
                 --build-property "compiler.cpp.extra_flags=-std=gnu++20" \
                 "$d"

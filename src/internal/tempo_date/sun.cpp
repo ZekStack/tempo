@@ -501,6 +501,7 @@ TempoSunEventResult Tempo::sunset(float latitude, float longitude, const char *t
 
 TempoSunEventResult
 Tempo::sunrise(float latitude, float longitude, const char *timeZone, const DateTime &day) const {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
 	if (!validCoordinates(latitude, longitude)) {
 		return TempoSunEventResult{false, DateTime{}};
 	}
@@ -521,6 +522,7 @@ Tempo::sunrise(float latitude, float longitude, const char *timeZone, const Date
 
 TempoSunEventResult
 Tempo::sunset(float latitude, float longitude, const char *timeZone, const DateTime &day) const {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
 	if (!validCoordinates(latitude, longitude)) {
 		return TempoSunEventResult{false, DateTime{}};
 	}
@@ -540,6 +542,7 @@ Tempo::sunset(float latitude, float longitude, const char *timeZone, const DateT
 }
 
 TempoSunEventResult Tempo::sunriseFromConfig(const DateTime &day) const {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
 	if (!hasLocation_) {
 		return TempoSunEventResult{false, DateTime{}};
 	}
@@ -563,6 +566,7 @@ TempoSunEventResult Tempo::sunriseFromConfig(const DateTime &day) const {
 }
 
 TempoSunEventResult Tempo::sunsetFromConfig(const DateTime &day) const {
+	std::lock_guard<std::recursive_mutex> lock(sunCycleMutex_);
 	if (!hasLocation_) {
 		return TempoSunEventResult{false, DateTime{}};
 	}

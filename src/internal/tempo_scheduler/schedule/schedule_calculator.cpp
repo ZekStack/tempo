@@ -1,13 +1,14 @@
 #include "schedule_calculator.h"
 
 #include <cmath>
+#include <limits>
 
 namespace {
 constexpr int64_t kMaxSearchMinutes = 366 * 24 * 60;
 constexpr int64_t kMaxSunSearchDays = 732;
 constexpr int64_t kMaxMoonSearchMinutes = 62 * 24 * 60;
-constexpr int kMinSunOffsetMinutes = -1440;
-constexpr int kMaxSunOffsetMinutes = 1440;
+constexpr int kMinHorizonOffsetMinutes = -1440;
+constexpr int kMaxHorizonOffsetMinutes = 1440;
 constexpr int kMinMoonPhaseAngle = 0;
 constexpr int kMaxMoonPhaseAngle = 359;
 constexpr int kMaxMoonPhaseTolerance = 30;
@@ -291,8 +292,12 @@ bool ScheduleCalculator::validate(const TempoSchedule &spec) {
 		       fieldWithinRange(spec.dayOfWeek, 0, 6);
 	case ScheduleKind::Sunrise:
 	case ScheduleKind::Sunset:
-		return spec.sunOffsetMinutes >= kMinSunOffsetMinutes &&
-		       spec.sunOffsetMinutes <= kMaxSunOffsetMinutes;
+		return spec.sunOffsetMinutes >= kMinHorizonOffsetMinutes &&
+		       spec.sunOffsetMinutes <= kMaxHorizonOffsetMinutes;
+	case ScheduleKind::Moonrise:
+	case ScheduleKind::Moonset:
+		return spec.moonOffsetMinutes >= kMinHorizonOffsetMinutes &&
+		       spec.moonOffsetMinutes <= kMaxHorizonOffsetMinutes;
 	case ScheduleKind::MoonPhaseAngle:
 		return spec.moonPhaseAngleDegrees >= kMinMoonPhaseAngle &&
 		       spec.moonPhaseAngleDegrees <= kMaxMoonPhaseAngle &&
@@ -323,6 +328,28 @@ bool ScheduleCalculator::computeNext(
 		return computeNextSunOccurrence(date, spec, fromUtc, outNextUtc, true);
 	case ScheduleKind::Sunset:
 		return computeNextSunOccurrence(date, spec, fromUtc, outNextUtc, false);
+	case ScheduleKind::Moonrise:
+	case ScheduleKind::Moonset: {
+		if (!validate(spec)) {
+			return false;
+		}
+		const int64_t offset = static_cast<int64_t>(spec.moonOffsetMinutes) * 60;
+		const int64_t from = fromUtc.epochSeconds;
+		if ((offset > 0 && from < std::numeric_limits<int64_t>::min() + offset) ||
+		    (offset < 0 && from > std::numeric_limits<int64_t>::max() + offset)) {
+			return false;
+		}
+		const auto type = spec.kind == ScheduleKind::Moonrise ? TempoMoonEventType::Rise
+		                                                      : TempoMoonEventType::Set;
+		DateTime event{};
+		// Shift the search origin back by the offset, so adjacent local dates
+		// and repeated hours need no special treatment.
+		if (!date.nextMoonEvent(type, DateTime{from - offset}, event)) {
+			return false;
+		}
+		outNextUtc = date.addSeconds(event, offset);
+		return true;
+	}
 	case ScheduleKind::MoonPhaseAngle:
 		return computeNextMoonPhaseOccurrence(date, spec, fromUtc, outNextUtc);
 	case ScheduleKind::MoonIlluminationPercent:

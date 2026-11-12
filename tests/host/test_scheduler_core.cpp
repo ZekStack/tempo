@@ -223,6 +223,177 @@ void testRejectedSubmissionsRetryWithoutLoss() {
 	       "queue-pressure regression should exercise the retry path");
 }
 
+void testLunarDispatchAcrossRefreshAndRetry(SchedulerJobMode mode) {
+	Tempo tempo;
+	initTempo(tempo);
+	expect(static_cast<bool>(tempo.updateLocation(69.6492f, 18.9553f, kBudapestTz)),
+	       "Tromso location should configure");
+	const DateTime fromUtc = tempo.fromLocal(2025, 6, 20);
+	const auto cycle = tempo.moonCycle(fromUtc);
+	expect(cycle.valid && cycle.eventCount == 3 &&
+	           cycle.events[0].type == TempoMoonEventType::Rise &&
+	           cycle.events[2].type == TempoMoonEventType::Rise,
+	       "Tromso regression date should contain two moonrises");
+	const DateTime first = cycle.events[0].utc;
+	const DateTime second = cycle.events[2].utc;
+	SchedulerCore core(tempo, fromUtc.epochSeconds);
+	RecordingExecutor executor(true);
+	TestExecutorResolver executors(&executor, &executor);
+	SchedulerJobOptions options;
+	options.mode = mode;
+	options.overlap = OverlapPolicy::AllowParallel;
+	int runs = 0;
+	const auto job = core.addJob(TempoSchedule::moonrise(), options, callbackFor(runs), DateTime{});
+	expect(job.ok(), "lunar schedules should wait for a valid wall clock");
+	core.dispatchDue(DateTime{}, executors);
+	expect(runs == 0, "lunar job should remain dormant while the clock is invalid");
+
+	core.dispatchDue(fromUtc, executors);
+	JobInfo info{};
+	expect(core.getJobInfo(job.value, info).ok() && info.hasNext &&
+	           tempo.isEqual(info.nextRunUtc, first),
+	       "the first valid tick should prime the lunar job at the next real occurrence");
+
+	executor.setMaxAcceptedPerRound(0);
+	core.dispatchDue(first, executors);
+	expect(runs == 0 && core.getJobInfo(job.value, info).ok() &&
+	           tempo.isEqual(info.nextRunUtc, tempo.addSeconds(first, 1)),
+	       "a rejected lunar invocation should be retried");
+	executor.setMaxAcceptedPerRound(1);
+	core.dispatchDue(tempo.addSeconds(first, 1), executors);
+	expect(runs == 1 && core.getJobInfo(job.value, info).ok() &&
+	           tempo.isEqual(info.nextRunUtc, second),
+	       "the retry should preserve the occurrence and schedule the second moonrise");
+
+	expect(core.refreshAllSchedules(fromUtc).ok(), "clock rollback should refresh schedules");
+	executor.resetRound();
+	core.dispatchDue(first, executors);
+	expect(runs == 1, "clock rollback should not replay an accepted lunar event");
+	core.dispatchDue(second, executors);
+	expect(runs == 2, "both moonrises should dispatch on their actual UTC second");
+	expect(core.cancelJob(job.value).ok() && !core.hasActiveMoonEventJobs(),
+	       "cancelling a lunar job should release its scheduling state");
+	core.dispatchDue(tempo.addDaysUtc(second, 2), executors);
+	expect(runs == 2, "a cancelled lunar job should stay cancelled");
+}
+
+void testLunarRejectedRetrySurvivesClockRefresh(SchedulerJobMode mode) {
+	Tempo tempo;
+	initTempo(tempo);
+	expect(static_cast<bool>(tempo.updateLocation(69.6492f, 18.9553f, kBudapestTz)),
+	       "retry refresh test location should configure");
+	const DateTime fromUtc = tempo.fromLocal(2025, 6, 20);
+	const auto cycle = tempo.moonCycle(fromUtc);
+	expect(cycle.valid && cycle.eventCount == 3,
+	       "retry refresh test requires two moonrises");
+	const DateTime first = cycle.events[0].utc;
+	const DateTime second = cycle.events[2].utc;
+
+	SchedulerCore core(tempo, fromUtc.epochSeconds);
+	RecordingExecutor executor(true);
+	TestExecutorResolver executors(&executor, &executor);
+	SchedulerJobOptions options;
+	options.mode = mode;
+	options.overlap = OverlapPolicy::AllowParallel;
+	int runs = 0;
+	const auto job = core.addJob(TempoSchedule::moonrise(), options, callbackFor(runs), fromUtc);
+	expect(job.ok(), "lunar retry refresh job should be accepted");
+
+	executor.setMaxAcceptedPerRound(0);
+	core.dispatchDue(first, executors);
+	JobInfo info{};
+	const DateTime retry = tempo.addSeconds(first, 1);
+	expect(runs == 0 && core.getJobInfo(job.value, info).ok() &&
+	           tempo.isEqual(info.nextRunUtc, retry),
+	       "rejected lunar occurrence should be queued for retry");
+
+	// An NTP/day refresh, including a rollback, must not replace this retry
+	// with the following astronomical occurrence.
+	expect(core.refreshAllSchedules(first).ok() &&
+	           core.refreshAllSchedules(tempo.subMinutes(first, 30)).ok(),
+	       "clock-context refreshes should succeed while a retry is pending");
+	expect(core.getJobInfo(job.value, info).ok() && info.hasNext &&
+	           tempo.isEqual(info.nextRunUtc, retry),
+	       "clock refresh must preserve the original rejected occurrence");
+
+	executor.setMaxAcceptedPerRound(1);
+	core.dispatchDue(retry, executors);
+	expect(runs == 1 && core.getJobInfo(job.value, info).ok() &&
+	           tempo.isEqual(info.nextRunUtc, second),
+	       "pending occurrence should dispatch once and advance to the next moonrise");
+	expect(core.refreshAllSchedules(first).ok(),
+	       "rollback refresh after successful submission should succeed");
+	core.dispatchDue(first, executors);
+	expect(runs == 1, "accepted lunar occurrence must not replay after rollback");
+}
+
+void testLunarRejectedRetryInvalidatedByLocationChange() {
+	Tempo tempo;
+	initTempo(tempo);
+	expect(static_cast<bool>(tempo.updateLocation(69.6492f, 18.9553f, kBudapestTz)),
+	       "location invalidation test should configure");
+	const DateTime fromUtc = tempo.fromLocal(2025, 6, 20);
+	const DateTime first = tempo.moonCycle(fromUtc).events[0].utc;
+	SchedulerCore core(tempo, fromUtc.epochSeconds);
+	RecordingExecutor executor(true);
+	TestExecutorResolver executors(&executor, &executor);
+	SchedulerJobOptions options;
+	options.mode = SchedulerJobMode::Inline;
+	int runs = 0;
+	const auto job = core.addJob(TempoSchedule::moonrise(), options, callbackFor(runs), fromUtc);
+	expect(job.ok(), "location invalidation job should be accepted");
+	executor.setMaxAcceptedPerRound(0);
+	core.dispatchDue(first, executors);
+
+	expect(static_cast<bool>(tempo.updateLocation(47.4979f, 19.0402f, kBudapestTz)),
+	       "location update should invalidate stale lunar event");
+	DateTime expected{};
+	const DateTime retry = tempo.addSeconds(first, 1);
+	expect(ScheduleCalculator::computeNext(tempo, TempoSchedule::moonrise(), retry, expected),
+	       "new location should have a subsequent moonrise");
+	executor.setMaxAcceptedPerRound(1);
+	core.dispatchDue(retry, executors);
+	JobInfo info{};
+	expect(runs == 0 && core.getJobInfo(job.value, info).ok() &&
+	           tempo.isEqual(info.nextRunUtc, expected),
+	       "location update must discard a retry computed for the old coordinates");
+}
+
+void testLunarScheduleLocationChanges() {
+	Tempo tempo;
+	initTempo(tempo);
+	const DateTime nowUtc = tempo.fromUtc(2025, 3, 30, 1);
+	SchedulerCore core(tempo, 0);
+	RecordingExecutor executor(true);
+	TestExecutorResolver executors(&executor, nullptr);
+	SchedulerJobOptions options;
+	options.mode = SchedulerJobMode::Inline;
+	int runs = 0;
+	const auto job = core.addJob(TempoSchedule::moonset(), options, callbackFor(runs), nowUtc);
+	JobInfo info{};
+	expect(job.ok() && core.getJobInfo(job.value, info).ok() && !info.hasNext,
+	       "a lunar job without coordinates should have no due time");
+	expect(static_cast<bool>(tempo.updateLocation(47.4979f, 19.0402f, kBudapestTz)),
+	       "Budapest location should configure");
+	core.dispatchDue(nowUtc, executors);
+	const auto oldSet = tempo.moonCycle(nowUtc).firstEvent(TempoMoonEventType::Set);
+	expect(oldSet.found && core.getJobInfo(job.value, info).ok() && info.hasNext &&
+	           tempo.isEqual(info.nextRunUtc, oldSet.utc),
+	       "the next tick should prime the job after coordinates become available");
+
+	expect(static_cast<bool>(tempo.updateLocation(51.5074f, -0.1278f, kBudapestTz)),
+	       "coordinate-only update should succeed");
+	core.dispatchDue(nowUtc, executors);
+	const auto newSet = tempo.moonCycle(nowUtc).firstEvent(TempoMoonEventType::Set);
+	expect(newSet.found && core.getJobInfo(job.value, info).ok() && info.hasNext &&
+	           tempo.isEqual(info.nextRunUtc, newSet.utc) && !tempo.isEqual(newSet.utc, oldSet.utc),
+	       "coordinate-only updates should refresh the due time without a local date change");
+	core.dispatchDue(oldSet.utc, executors);
+	expect(runs == 0, "the superseded lunar due time should not dispatch");
+	core.dispatchDue(newSet.utc, executors);
+	expect(runs == 1, "the updated lunar due time should dispatch once");
+}
+
 struct RetryPublishContext {
 	int attempts = 0;
 	int failuresBeforeSuccess = 0;
@@ -277,6 +448,12 @@ int main() {
 	testManySchedulesAtSameTimestamp();
 	testRejectedSubmissionsRetryWithoutLoss();
 	testCompletionPublicationRetriesUntilAccepted();
+	testLunarDispatchAcrossRefreshAndRetry(SchedulerJobMode::Inline);
+	testLunarDispatchAcrossRefreshAndRetry(SchedulerJobMode::WorkerPool);
+	testLunarRejectedRetrySurvivesClockRefresh(SchedulerJobMode::Inline);
+	testLunarRejectedRetrySurvivesClockRefresh(SchedulerJobMode::WorkerPool);
+	testLunarRejectedRetryInvalidatedByLocationChange();
+	testLunarScheduleLocationChanges();
 
 	if (failures != 0) {
 		std::cerr << failures << " scheduler regression test(s) failed\n";
